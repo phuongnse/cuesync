@@ -9,9 +9,11 @@ dependencies = [
     "charset-normalizer>=3.3",
     "fastapi>=0.115",
     "httpx>=0.27",
+    "numpy>=1.26",
     "pydantic>=2.7",
     "pysubs2>=1.7",
     "uvicorn>=0.32",
+    "webrtcvad-wheels>=2.0.14",
 ]
 
 [project.optional-dependencies]
