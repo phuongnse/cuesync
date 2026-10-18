@@ -43,6 +43,10 @@ on `main`.
 - **A parent issue closes when its last part does.** With `close_parent_issues` on,
   NexKit closes a parent issue once every sub-issue is closed and at least one was
   completed.
+- **The rules on `main` let NexKit merge.** They require a pull request, NexKit's own
+  checks (`nexkit/checks` and `nexkit/review`) and no approval from a person, and forbid
+  force pushes and deleting `main`. They do not require the CI workflow, which does not
+  run on NexKit's branches; NexKit's checks run the same scripts there.
 - **CI runs on `main` after every merge.** A merge by NexKit starts no `push` workflow, so
   NexKit starts the CI workflow on `main` itself, through `merge.after_workflows`. Two
   pull requests that pass on their own can still break `main` together. When CI on `main`
@@ -59,7 +63,8 @@ on `main`.
 - **Everything goes through NexKit, except changes in paths NexKit may not change.**
   Those are `.github/` and `.nexkit/` (the `protected_paths` setting). Such changes, for
   example a NexKit version bump or a profile change, are hand-made pull requests that the
-  owner opens and merges after the CI workflow passes.
+  owner opens. NexKit's checks do not run on them, so the owner merges them with an admin
+  bypass of the rules on `main`, after the CI workflow passes.
 
 ## Profiles
 
