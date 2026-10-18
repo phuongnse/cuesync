@@ -177,6 +177,34 @@ def test_a_stream_without_file_idx_keeps_none():
     assert ref.file_idx is None
 
 
+def test_tracker_sources_are_kept_and_dht_sources_are_dropped():
+    item = {
+        "infoHash": "a" * 40,
+        "behaviorHints": {"filename": "a.mkv"},
+        "sources": ["tracker:udp://a:1/announce", "dht:" + "a" * 40, 5, "tracker:", None],
+    }
+    ref = lookup(
+        Api(lambda request: httpx.Response(200, json={"streams": [item]})),
+        video=MOVIE,
+        filename="a.mkv",
+        size=None,
+    )
+    assert ref is not None
+    assert ref.trackers == ("udp://a:1/announce",)
+
+
+def test_a_stream_without_sources_has_no_trackers():
+    item = {"infoHash": "a" * 40, "behaviorHints": {"filename": "a.mkv"}}
+    ref = lookup(
+        Api(lambda request: httpx.Response(200, json={"streams": [item]})),
+        video=MOVIE,
+        filename="a.mkv",
+        size=None,
+    )
+    assert ref is not None
+    assert ref.trackers == ()
+
+
 def test_episode_filename_only_in_the_title():
     api = Api(answer("series.json"))
     name = "Breaking Bad (2008) - S01E02 - Cat's in the Bag... (1080p BluRay x265 Silence).mkv"

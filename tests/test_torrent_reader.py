@@ -6,7 +6,7 @@ import asyncio
 import shutil
 import subprocess
 import sys
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from pathlib import Path
 
 import httpx
@@ -95,10 +95,20 @@ class FakeEngine:
         self.torrents: list[FakeTorrent] = []
         self.removed: list[FakeTorrent] = []
         self.limits: tuple[int, int] | None = None
+        self.trackers: tuple[str, ...] | None = None
 
-    def add(self, info_hash: str, save_path: Path, *, download_limit: int, upload_limit: int):
+    def add(
+        self,
+        info_hash: str,
+        save_path: Path,
+        *,
+        trackers: Sequence[str],
+        download_limit: int,
+        upload_limit: int,
+    ):
         assert info_hash == HASH
         assert save_path.is_dir()
+        self.trackers = tuple(trackers)
         self.limits = (download_limit, upload_limit)
         torrent = FakeTorrent(self, save_path)
         self.torrents.append(torrent)
@@ -167,7 +177,16 @@ def test_probe_through_open_reads_only_some_pieces(
     # head and tail are asked first, with the earliest deadline
     assert [deadline for _, deadline in torrent.wanted[:4]] == [0, 0, 0, 0]
     assert engine.limits == (0, 256 * 1024)
+    assert engine.trackers == ()
     assert_cleaned(engine, tmp_path)
+
+
+def test_trackers_of_the_stream_are_passed_to_the_engine(engine: FakeEngine, tmp_path: Path):
+    async def check(url: str) -> None:
+        pass
+
+    run_open(engine, tmp_path, check, ref=stream(trackers=("udp://a:1/announce",)))
+    assert engine.trackers == ("udp://a:1/announce",)
 
 
 def test_bytes_through_the_url_are_the_file(engine: FakeEngine, tmp_path: Path, mkv_bytes: bytes):
@@ -306,7 +325,7 @@ def test_file_is_picked_by_the_debrid_rule(engine: FakeEngine, tmp_path: Path, m
 def test_missing_libtorrent_names_the_extra(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setitem(sys.modules, "libtorrent", None)
     with pytest.raises(TorrentError, match=r"cuesync\[torrent\]"):
-        LibtorrentEngine().add(HASH, tmp_path, download_limit=0, upload_limit=0)
+        LibtorrentEngine().add(HASH, tmp_path, trackers=(), download_limit=0, upload_limit=0)
 
 
 def test_package_imports_without_importing_libtorrent():

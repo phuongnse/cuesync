@@ -36,6 +36,7 @@ class StreamRef:
     file_idx: int | None  # None when Torrentio omits it, for single-file torrents
     filename: str | None
     size: int | None
+    trackers: tuple[str, ...] = ()  # tracker URLs from Torrentio, to find peers faster
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,7 @@ class _Stream:
     file_idx: int | None
     filename: str | None
     size: int | None
+    trackers: tuple[str, ...] = ()
 
 
 # request URL -> (expires_at on the monotonic clock, parsed streams)
@@ -90,6 +92,7 @@ async def find_stream(
         file_idx=match.file_idx,
         filename=match.filename,
         size=match.size or (size if size and size > 0 else None),
+        trackers=match.trackers,
     )
 
 
@@ -159,10 +162,24 @@ def _parse(items: list[Any]) -> list[_Stream]:
             size = hints.get("videoSize")
             if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
                 size = None
-            streams.append(_Stream(info_hash.lower(), file_idx, filename, size))
+            streams.append(
+                _Stream(info_hash.lower(), file_idx, filename, size, _trackers(item.get("sources")))
+            )
         except (KeyError, TypeError, AttributeError):
             continue
     return streams
+
+
+def _trackers(sources: object) -> tuple[str, ...]:
+    """The tracker URLs of a `sources` list. Its `dht:` entries and odd items are skipped."""
+    if not isinstance(sources, list):
+        return ()
+    prefix = "tracker:"
+    return tuple(
+        source.removeprefix(prefix)
+        for source in sources
+        if isinstance(source, str) and source.startswith(prefix) and len(source) > len(prefix)
+    )
 
 
 def _title_filename(title: object) -> str | None:

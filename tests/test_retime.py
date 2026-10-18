@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 
 import pytest
@@ -21,6 +21,7 @@ from cuesync.search import encode_key
 from cuesync.sources.base import Candidate
 from cuesync.stream import StreamRef
 from cuesync.sync import Correction, Verdict
+from cuesync.torrent import TorrentError
 from test_app import FakeSource, fake_candidate
 
 TOKEN = encode_config(
@@ -55,6 +56,12 @@ class FakeStages:
     extract_calls: int = 0
     align_calls: int = 0
     aligned: list = field(default_factory=list)
+    torrent_error: bool = False
+    torrent_opens: int = 0
+    torrent_closes: int = 0
+    probe_kwargs: list = field(default_factory=list)
+    extract_kwargs: list = field(default_factory=list)
+    events: list = field(default_factory=list)
 
     async def find_stream(self, client, video, filename, size):
         self.stream_calls += 1
@@ -63,11 +70,26 @@ class FakeStages:
     def debrid(self, config, client):
         return FakeDebrid() if self.debrid_enabled else None
 
-    async def probe(self, url):
+    @asynccontextmanager
+    async def torrent(self, stream):
+        self.torrent_opens += 1
+        self.events.append("open")
+        if self.torrent_error:
+            raise TorrentError("no peers")
+        try:
+            yield "http://127.0.0.1:1/fake"
+        finally:
+            self.torrent_closes += 1
+            self.events.append("close")
+
+    async def probe(self, url, **kwargs):
+        self.probe_kwargs.append(kwargs)
         return MediaInfo(3600.0, (AudioTrack(0, None, True),))
 
-    async def extract_windows(self, url, duration, *, track):
+    async def extract_windows(self, url, duration, *, track, **kwargs):
         self.extract_calls += 1
+        self.extract_kwargs.append(kwargs)
+        self.events.append("extract")
         await asyncio.sleep(self.extract_delay)
         if self.gate is not None:
             await asyncio.to_thread(self.gate.wait, 10)
@@ -78,7 +100,14 @@ class FakeStages:
         return self.correction
 
     def stages(self) -> Stages:
-        return Stages(self.find_stream, self.debrid, self.probe, self.extract_windows, self.align)
+        return Stages(
+            self.find_stream,
+            self.debrid,
+            self.probe,
+            self.extract_windows,
+            self.align,
+            torrent=self.torrent,
+        )
 
 
 @pytest.fixture
@@ -484,3 +513,119 @@ def test_stage_failures_are_not_stored(make_client, tmp_path):
     entries_of(second)
     settle(second)
     assert ids_of(entries_of(second)[:1]) == ["cuesync-vie-1"]
+
+
+def test_torrent_fallback_serves_the_retimed_file_without_debrid(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_FALLBACK", "1")
+    fake = FakeStages(debrid_enabled=False)
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, fake)
+    entries = entries_of(client, NO_DEBRID)
+    assert ids_of(entries) == ["cuesync-vie-1", original("1")]
+    settle(client)
+    response = client.get(path_of(entries[0]))
+    assert response.content.decode() == "1\n00:00:03,000 --> 00:00:04,500\nHello there\n\n"
+    assert fake.torrent_opens == 1
+    assert fake.events == ["open", "extract", "close"]
+    assert fake.probe_kwargs == [{"timeout": 240.0}]
+    assert fake.extract_kwargs == [{"max_concurrent": 1, "timeout_s": 240.0}]
+
+
+def test_without_the_fallback_no_debrid_means_no_torrent(make_client):
+    fake = FakeStages(debrid_enabled=False)
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, fake)
+    assert ids_of(entries_of(client, NO_DEBRID)) == [original("1")]
+    settle(client)
+    assert (fake.torrent_opens, fake.stream_calls) == (0, 0)
+    assert status_of(client, token=NO_DEBRID)["jobs"] == []
+
+
+def test_debrid_wins_over_the_torrent_fallback(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_FALLBACK", "1")
+    fake = FakeStages()
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, fake)
+    assert ids_of(entries_of(client)) == ["cuesync-vie-1", original("1")]
+    settle(client)
+    assert fake.torrent_opens == 0
+    assert (fake.stream_calls, fake.extract_calls, fake.align_calls) == (1, 1, 1)
+    assert fake.probe_kwargs == [{}]
+    assert fake.extract_kwargs == [{}]
+
+
+def test_debrid_without_a_link_does_not_fall_back_to_the_torrent(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_FALLBACK", "1")
+
+    class NoLink(FakeDebrid):
+        async def direct_url(self, stream):
+            return None
+
+    class Stages_(FakeStages):
+        def debrid(self, config, client):
+            return NoLink()
+
+    fake = Stages_()
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, fake)
+    entries_of(client)
+    settle(client)
+    assert ids_of(entries_of(client)) == [original("1")]
+    assert fake.torrent_opens == 0
+
+
+def test_torrent_error_fails_the_job_and_lists_the_originals_only(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_FALLBACK", "1")
+    fake = FakeStages(debrid_enabled=False, torrent_error=True)
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, fake)
+    assert len(entries_of(client, NO_DEBRID)) == 2
+    settle(client)
+    assert ids_of(entries_of(client, NO_DEBRID)) == [original("1")]
+    assert [(j["state"], j["error"]) for j in status_of(client, token=NO_DEBRID)["jobs"]] == [
+        ("failed", "unavailable")
+    ]
+    assert (fake.torrent_opens, fake.extract_calls) == (1, 0)
+
+
+def test_torrent_fallback_raises_the_job_timeout(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_FALLBACK", "1")
+    monkeypatch.setenv("CUESYNC_TORRENT_TIMEOUT_S", "600")
+    client = make_client(FakeSource(), FakeStages())
+    assert client.app.state.jobs.timeout == 720
+    assert client.app.state.stages.torrent_timeout_s == 600
+
+
+def test_torrent_fallback_keeps_a_longer_job_timeout(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_FALLBACK", "1")
+    client = make_client(FakeSource(), FakeStages(), job_timeout=1000.0)
+    assert client.app.state.jobs.timeout == 1000.0
+
+
+def test_job_timeout_is_unchanged_without_the_fallback(make_client, monkeypatch):
+    monkeypatch.setenv("CUESYNC_TORRENT_TIMEOUT_S", "600")
+    client = make_client(FakeSource(), FakeStages())
+    assert client.app.state.jobs.timeout == 300.0
+    assert client.app.state.stages.torrent is None
+
+
+def test_leftover_torrent_data_is_deleted_at_startup(make_client, data_dir):
+    leftover = data_dir / "torrents" / "x"
+    leftover.mkdir(parents=True)
+    (leftover / "file.mkv").write_bytes(b"data")
+    make_client(FakeSource(), FakeStages())
+    assert not (data_dir / "torrents").exists()
+
+
+def test_torrent_engine_is_closed_at_shutdown():
+    class Engine:
+        closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    engine = Engine()
+    app = create_app(source_factory=lambda config, http: [], stages=Stages(), torrent_engine=engine)
+    with TestClient(app):
+        assert engine.closed == 0
+    assert engine.closed == 1

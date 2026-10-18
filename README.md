@@ -13,6 +13,10 @@ where people speak and shifts and stretches the subtitles to match. It fixes con
 offsets and frame-rate drift (for example 25 fps subtitles on a 23.976 fps file). It does
 not translate or generate subtitles.
 
+Without a debrid service, you can turn on an optional torrent fallback that reads the
+audio over BitTorrent instead. It is off by default and meant for self-hosting. See
+[Without a debrid service](docs/running.md#without-a-debrid-service).
+
 ## Install
 
 1. Run the server and make it reachable over HTTPS; see [docs/running.md](docs/running.md),
