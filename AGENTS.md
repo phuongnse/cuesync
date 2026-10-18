@@ -28,8 +28,12 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle,
    estimates the offset in each window, and keeps the ratio `a` and shift `b` in
    `t' = a·t + b` that most windows agree on.
-6. It returns re-timed subtitles next to the originals, and caches the result by video
-   hash so the next request is instant.
+6. The subtitles list returns at once, without waiting for steps 3 to 5. A background job
+   (one per video hash and subtitle, at most two at a time, five minutes each) runs them. Until
+   it finishes, the re-timed entry serves a short "being synced, reopen the menu" subtitle.
+   Afterwards the same URL serves the re-timed file, and the result is cached by video hash so
+   the next request is instant. A failed job is remembered for ten minutes and its entry is
+   left out. `/{config}/status/{videoHash}.json` lists the jobs for debugging.
 
 ## Layout
 
@@ -44,7 +48,9 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/debrid/`: the `DebridProvider` protocol and the debrid clients (Real-Debrid, TorBox) that turn a `StreamRef` into a direct HTTPS link.
 - `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
 - `src/cuesync/cache.py`: the SQLite plus files cache of searches, subtitles, speech timelines and sync results.
-- `src/cuesync/retime.py`: runs stream lookup, debrid link, audio windows and sync for the top subtitles and returns the re-timed copies.
+- `src/cuesync/retime.py`: runs stream lookup, debrid link, audio windows and sync for the top subtitles and returns the correction found for each.
+- `src/cuesync/jobs.py`: the in-memory background sync jobs, deduplicated, limited in number and time.
+- `src/cuesync/placeholder.py`: the "being synced" subtitle served while a job runs.
 - `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window subtitle offsets by FFT cross-correlation, and the global correction (frame-rate ratio and shift) with its verdict.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.

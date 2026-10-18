@@ -6,7 +6,6 @@ https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/protocol.md
 
 from __future__ import annotations
 
-import asyncio
 import html
 import logging
 import os
@@ -24,22 +23,18 @@ from fastapi.responses import HTMLResponse, Response
 from . import __version__
 from .cache import DEFAULT_MAX_BYTES, Cache
 from .config import InvalidConfig, RedactConfigFilter, UserConfig, decode_config
-from .retime import RETIME_BUDGET, Stages, retime
-from .search import (
-    build_sources,
-    decode_key,
-    decode_retimed_key,
-    encode_key,
-    encode_retimed_key,
-    gather_candidates,
-    rank,
-)
+from .jobs import JOB_LIMIT, JOB_TIMEOUT, Job, Jobs, JobState
+from .placeholder import placeholder_cues
+from .retime import Stages, pick, retime
+from .search import build_sources, decode_key, encode_key, gather_candidates, rank
 from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
 from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
 from .subtitles import write_srt
 from .sync import Correction, Verdict, apply_correction
 
 log = logging.getLogger(__name__)
+
+MAX_HASH_LENGTH = 64
 
 MANIFEST = {
     "id": "community.cuesync",
@@ -132,46 +127,76 @@ async def find_subtitles(
         cache=cache,
     )
     ranked = rank(candidates, config.languages, extra.filename, config.max_per_language)
-    try:
-        retimed = await asyncio.wait_for(
-            retime(
-                request.app.state.stages,
-                sources,
-                request.app.state.http,
-                config,
-                video,
-                extra,
-                ranked,
-                cache=cache,
-            ),
-            request.app.state.retime_budget,
-        )
-    except TimeoutError:
-        log.info("re-timing did not finish in time, returning the original subtitles")
-        retimed = []
-    except Exception as exc:
-        log.warning("re-timing failed: %s", type(exc).__name__)
-        retimed = []
     base = f"{base_url(request)}/{request.path_params['config']}"
     entries = []
-    numbers: dict[str, int] = {}
-    for item in retimed:
-        language = item.candidate.language
-        key = encode_retimed_key(item.candidate, item.correction.scale, item.correction.offset_ms)
-        numbers[language] = numbers.get(language, 0) + 1
-        entries.append(
-            {
-                "id": f"cuesync-{language}-{numbers[language]}",
-                "url": f"{base}/retimed/{key}.srt",
-                "lang": language,
-            }
-        )
+    video_hash = extra.video_hash
+    if _can_sync(video_hash, extra):
+        jobs: Jobs = request.app.state.jobs
+        stages: Stages = request.app.state.stages
+        http: httpx.AsyncClient = request.app.state.http
+        listed: list[tuple[Candidate, str]] = []
+        to_start: list[Candidate] = []
+        for candidate in pick(ranked):
+            key = encode_key(candidate)
+            correction, job = _sync_state(cache, jobs, video_hash, key)
+            if correction is not None:
+                wanted = correction.verdict is Verdict.SYNCED
+            elif job is not None:
+                wanted = job.state in (JobState.PENDING, JobState.RUNNING)
+            else:
+                wanted = stages.debrid(config, http) is not None
+                if wanted:
+                    to_start.append(candidate)
+            if wanted:
+                listed.append((candidate, key))
+        if to_start:
+
+            async def work(cands: list[Candidate]) -> dict[Candidate, Correction]:
+                return await retime(stages, sources, http, config, video, extra, cands, cache=cache)
+
+            jobs.submit(video_hash, to_start, work)
+        numbers: dict[str, int] = {}
+        for candidate, key in listed:
+            language = candidate.language
+            numbers[language] = numbers.get(language, 0) + 1
+            entries.append(
+                {
+                    "id": f"cuesync-{language}-{numbers[language]}",
+                    "url": f"{base}/retimed/{video_hash}/{key}.srt",
+                    "lang": language,
+                }
+            )
     entries.extend(
         {"id": key, "url": f"{base}/sub/{key}.srt", "lang": candidate.language}
         for candidate in ranked
         for key in (encode_key(candidate),)
     )
     return {"subtitles": entries}
+
+
+def _valid_hash(video_hash: str | None) -> bool:
+    """Jobs are keyed by the video hash and it is part of a URL path, so it must be plain."""
+    return (
+        bool(video_hash)
+        and video_hash.isascii()
+        and video_hash.isalnum()
+        and len(video_hash) <= MAX_HASH_LENGTH
+    )
+
+
+def _can_sync(video_hash: str | None, extra: Extra) -> bool:
+    return _valid_hash(video_hash) and bool(extra.filename or extra.video_size is not None)
+
+
+def _sync_state(
+    cache: Cache, jobs: Jobs, video_hash: str, key: str
+) -> tuple[Correction | None, Job | None]:
+    """The correction of a subtitle, from the cache or else from its finished job, and its job."""
+    correction = cache.get_sync(video_hash, key)
+    job = jobs.get(video_hash, key)
+    if correction is None and job is not None and job.state is JobState.DONE:
+        correction = job.correction
+    return correction, job
 
 
 async def _serve_srt(
@@ -210,7 +235,8 @@ def create_app(
     source_factory: Callable[[UserConfig, httpx.AsyncClient], Sequence[SubtitleSource]]
     | None = None,
     stages: Stages | None = None,
-    retime_budget: float = RETIME_BUDGET,
+    job_limit: int = JOB_LIMIT,
+    job_timeout: float = JOB_TIMEOUT,
     cache: Cache | None = None,
 ) -> FastAPI:
     redact_access_log()
@@ -218,6 +244,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
+        await app.state.jobs.close()
         await app.state.http.aclose()
         app.state.cache.close()
 
@@ -225,7 +252,7 @@ def create_app(
     app.state.sources = source_factory or build_sources
     app.state.http = httpx.AsyncClient()
     app.state.stages = stages or Stages()
-    app.state.retime_budget = retime_budget
+    app.state.jobs = Jobs(job_limit, job_timeout)
     if cache is None:
         cache = Cache(
             Path(os.environ.get("CUESYNC_DATA_DIR") or "data"),
@@ -283,14 +310,55 @@ def create_app(
             raise HTTPException(404, "Unknown subtitle") from None
         return await _serve_srt(request, config, source_name, source_id, language)
 
-    @app.get("/{config}/retimed/{key}.srt")
-    async def retimed_file(request: Request, key: str, config: ConfigDep) -> Response:
+    @app.get("/{config}/retimed/{video_hash}/{key}.srt")
+    async def retimed_file(
+        request: Request, video_hash: str, key: str, config: ConfigDep
+    ) -> Response:
         try:
-            source_name, source_id, language, scale, offset_ms = decode_retimed_key(key)
+            source_name, source_id, language = decode_key(key)
         except ValueError:
             raise HTTPException(404, "Unknown subtitle") from None
-        correction = Correction(Verdict.SYNCED, scale, offset_ms, 0, 0.0)
+        if not _valid_hash(video_hash):
+            raise HTTPException(404, "Unknown subtitle")
+        jobs: Jobs = request.app.state.jobs
+        correction, job = _sync_state(request.app.state.cache, jobs, video_hash, key)
+        if (
+            correction is None
+            and job is not None
+            and job.state
+            in (
+                JobState.PENDING,
+                JobState.RUNNING,
+            )
+        ):
+            # No-store, so the player asks again and gets the synced file once it is ready.
+            return Response(
+                write_srt(placeholder_cues(language)),
+                media_type="application/x-subrip; charset=utf-8",
+                headers={"Cache-Control": "no-store"},
+            )
+        if correction is not None and correction.verdict is not Verdict.SYNCED:
+            correction = None
         return await _serve_srt(request, config, source_name, source_id, language, correction)
+
+    @app.get("/{config}/status/{video_hash}.json")
+    def status(request: Request, video_hash: str, config: ConfigDep) -> dict:
+        jobs: Jobs = request.app.state.jobs
+        return {
+            "videoHash": video_hash,
+            "jobs": [
+                {
+                    "subtitle": job.subtitle_key,
+                    "lang": job.language,
+                    "state": job.state.value,
+                    "verdict": job.correction.verdict.value if job.correction else None,
+                    "scale": job.correction.scale if job.correction else None,
+                    "offsetMs": job.correction.offset_ms if job.correction else None,
+                    "error": job.error,
+                }
+                for job in jobs.for_video(video_hash)
+            ],
+        }
 
     return app
 
