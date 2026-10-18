@@ -1,0 +1,16 @@
+1
+00:00:01,000 --> 00:00:03,500
+<i>Hello there.</i>
+
+2
+00:00:04,000 --> 00:00:06,000
+<font color="#ff0000">Red</font> and plain
+on two lines.
+
+3
+00:00:07,200 --> 00:00:09,800
+Third cue.
+
+4
+00:01:02,030 --> 00:01:04,560
+Last one, after a minute.

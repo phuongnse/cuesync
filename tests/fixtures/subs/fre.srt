@@ -1,0 +1,40 @@
+1
+00:00:01,000 --> 00:00:04,000
+Où êtes-vous allés si tôt ce matin ?
+
+2
+00:00:05,000 --> 00:00:08,000
+J'ai oublié mon manteau chez ma sœur à Noël.
+
+3
+00:00:09,000 --> 00:00:12,000
+Ça fait longtemps que nous ne nous sommes pas vus.
+
+4
+00:00:13,000 --> 00:00:16,000
+Elle a murmuré : « Ne dis rien à personne. »
+
+5
+00:00:17,000 --> 00:00:20,000
+Le garçon a mangé tous les gâteaux de la fête.
+
+6
+00:00:21,000 --> 00:00:24,000
+Il faudrait être fou pour traverser cette forêt la nuit.
+
+7
+00:00:25,000 --> 00:00:28,000
+Qu'est-ce que tu as fait pendant l'été dernier ?
+
+8
+00:00:29,000 --> 00:00:32,000
+Nous avons célébré l'anniversaire de mon père à Genève.
+
+9
+00:00:33,000 --> 00:00:36,000
+Cet été, ils déménagent près de la mer.
+
+10
+00:00:37,000 --> 00:00:40,000
+À bientôt, et n'oubliez pas de fermer la porte !
+

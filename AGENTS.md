@@ -36,6 +36,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/stremio.py`: parses the `extra` segment and the `id` of addon requests.
 - `src/cuesync/__main__.py`: `python -m cuesync` / `cuesync` entry point (uvicorn).
 - `src/cuesync/config.py`: user settings, their URL encoding and log redaction.
+- `src/cuesync/subtitles/`: subtitle model, decoding, SRT/VTT/ASS parsing, SRT writing and zip picking.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
 

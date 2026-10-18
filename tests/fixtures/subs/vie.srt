@@ -1,0 +1,40 @@
+1
+00:00:01,000 --> 00:00:04,000
+Tiếng Việt là ngôn ngữ của người Việt Nam.
+
+2
+00:00:05,000 --> 00:00:08,000
+Bạn đang đi đâu vào buổi sáng sớm thế này?
+
+3
+00:00:09,000 --> 00:00:12,000
+Tôi không bao giờ quên người đã giúp đỡ tôi.
+
+4
+00:00:13,000 --> 00:00:16,000
+Cô ấy thì thầm: "Đừng nói với ai những gì anh thấy."
+
+5
+00:00:17,000 --> 00:00:20,000
+Chúng ta phải về nhà trước khi trời mưa to.
+
+6
+00:00:21,000 --> 00:00:24,000
+Ông ngoại kể chuyện cổ tích cho các cháu nghe.
+
+7
+00:00:25,000 --> 00:00:28,000
+Mặt trăng sáng tỏ trên những ngọn núi xa xôi.
+
+8
+00:00:29,000 --> 00:00:32,000
+Hãy cẩn thận, đường trơn lắm đấy!
+
+9
+00:00:33,000 --> 00:00:36,000
+Nhà hàng này phục vụ phở ngon nhất thành phố.
+
+10
+00:00:37,000 --> 00:00:40,000
+Cảm ơn bạn rất nhiều, hẹn gặp lại vào tuần sau.
+

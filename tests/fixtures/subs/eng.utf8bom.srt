@@ -1,0 +1,40 @@
+﻿1
+00:00:01,000 --> 00:00:04,000
+Where are you going so early in the morning?
+
+2
+00:00:05,000 --> 00:00:08,000
+I thought you would never ask me that question.
+
+3
+00:00:09,000 --> 00:00:12,000
+The weather was terrible, but we kept walking anyway.
+
+4
+00:00:13,000 --> 00:00:16,000
+She whispered, "Don't tell anyone what you saw tonight."
+
+5
+00:00:17,000 --> 00:00:20,000
+Nobody believed his story about the lighthouse keeper.
+
+6
+00:00:21,000 --> 00:00:24,000
+We should have left before the storm arrived.
+
+7
+00:00:25,000 --> 00:00:28,000
+That's the third time this week he has been late.
+
+8
+00:00:29,000 --> 00:00:32,000
+Could you please bring me a glass of water?
+
+9
+00:00:33,000 --> 00:00:36,000
+They finally understood what the old man had meant.
+
+10
+00:00:37,000 --> 00:00:40,000
+It's been a long road, and we're not finished yet.
+
