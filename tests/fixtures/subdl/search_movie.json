@@ -1,0 +1,62 @@
+{
+  "status": true,
+  "results": [
+    {"sd_id": 1, "type": "movie", "name": "Inception", "imdb_id": "tt1375666", "year": 2010}
+  ],
+  "subtitles": [
+    {
+      "release_name": "Inception.2010.1080p.BluRay.x264",
+      "name": "Inception 2010",
+      "lang": "english",
+      "language": "EN",
+      "url": "/subtitle/3197651-3213944.zip",
+      "season": null,
+      "episode": null,
+      "full_season": false,
+      "hi": false
+    },
+    {
+      "release_name": "Inception.2010.720p.BluRay.x264-SPARKS",
+      "name": "Inception 2010",
+      "lang": "vietnamese",
+      "language": "VI",
+      "url": "/subtitle/3197652-3213945.zip",
+      "season": null,
+      "episode": null,
+      "full_season": false,
+      "hi": false
+    },
+    {
+      "release_name": "Inception.2010.German",
+      "name": "Inception 2010",
+      "lang": "german",
+      "language": "DE",
+      "url": "/subtitle/3197653-3213946.zip",
+      "season": null,
+      "episode": null,
+      "full_season": false,
+      "hi": false
+    },
+    {
+      "release_name": "Inception.2010.Bad.Link",
+      "name": "Inception 2010",
+      "lang": "english",
+      "language": "EN",
+      "url": "https://evil.example/subtitle/3197655-3213948.zip",
+      "season": null,
+      "episode": null,
+      "full_season": false,
+      "hi": false
+    },
+    {
+      "name": "Inception 2010",
+      "lang": "english",
+      "language": "EN",
+      "url": "/subtitle/3197654-3213947.zip",
+      "season": null,
+      "episode": null,
+      "full_season": false,
+      "hi": false
+    }
+  ]
+}
