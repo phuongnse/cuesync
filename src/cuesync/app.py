@@ -9,14 +9,14 @@ from __future__ import annotations
 import logging
 from importlib.resources import files
 from typing import Annotated
-from urllib.parse import parse_qsl
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from . import __version__
 from .config import InvalidConfig, RedactConfigFilter, UserConfig, decode_config
+from .stremio import VideoId, parse_extra, parse_video_id, raw_extra_segment
 
 MANIFEST = {
     "id": "community.cuesync",
@@ -30,10 +30,11 @@ MANIFEST = {
 }
 
 
-def parse_extra(extra: str) -> dict[str, str]:
-    """Parse the `extra` path segment Stremio sends, such as
-    `videoHash=8e24...&videoSize=1478453234&filename=Movie.2010.1080p.mkv`."""
-    return dict(parse_qsl(extra, keep_blank_values=True))
+def _parse_id_or_400(id: str) -> VideoId:
+    try:
+        return parse_video_id(id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid id") from None
 
 
 def config_from_path(config: str) -> UserConfig:
@@ -87,11 +88,18 @@ def create_app() -> FastAPI:
 
     @app.get("/{config}/subtitles/{type}/{id}.json")
     def subtitles(type: str, id: str, config: ConfigDep) -> dict:
+        _parse_id_or_400(id)
         return {"subtitles": []}
 
-    @app.get("/{config}/subtitles/{type}/{id}/{extra}.json")
-    def subtitles_with_extra(type: str, id: str, extra: str, config: ConfigDep) -> dict:
-        parse_extra(extra)
+    # `extra:path` because Starlette matches the decoded path: an encoded `/` in the
+    # filename would otherwise end the segment early and give a 404.
+    @app.get("/{config}/subtitles/{type}/{id}/{extra:path}.json")
+    def subtitles_with_extra(
+        request: Request, type: str, id: str, extra: str, config: ConfigDep
+    ) -> dict:
+        _parse_id_or_400(id)
+        raw = request.scope.get("raw_path")
+        parse_extra(raw_extra_segment(raw) if raw is not None else extra)
         return {"subtitles": []}
 
     return app
