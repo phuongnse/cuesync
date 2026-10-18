@@ -22,7 +22,7 @@
 </style>
 </head>
 <body>
-<main>
+<main data-base-url="{{BASE_URL}}">
 <h1>Configure CueSync</h1>
 <form id="form">
   <label>Subtitle languages
@@ -67,6 +67,7 @@
 </main>
 <script>
 (function () {
+  var base = document.querySelector("main").dataset.baseUrl;
   var form = document.getElementById("form");
   var fields = ["languages", "opensubtitles_api_key", "opensubtitles_username",
     "opensubtitles_password", "subdl_api_key", "debrid_provider", "debrid_api_key"];
@@ -110,8 +111,8 @@
     }
     error.textContent = "";
     var token = toBase64Url(JSON.stringify(cfg));
-    var manifestUrl = location.origin + "/" + token + "/manifest.json";
-    var installUrl = "stremio://" + location.host + "/" + token + "/manifest.json";
+    var manifestUrl = base + "/" + token + "/manifest.json";
+    var installUrl = "stremio://" + base.replace(/^https?:\/\//, "") + "/" + token + "/manifest.json";
     document.getElementById("manifest-url").value = manifestUrl;
     document.getElementById("install").href = installUrl;
     document.getElementById("result").hidden = false;
