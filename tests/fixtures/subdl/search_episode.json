@@ -1,0 +1,41 @@
+{
+  "status": true,
+  "results": [
+    {"sd_id": 2, "type": "tv", "name": "Breaking Bad", "imdb_id": "tt0903747", "year": 2008}
+  ],
+  "subtitles": [
+    {
+      "release_name": "Breaking.Bad.S01.1080p.BluRay.x264",
+      "name": "Breaking Bad",
+      "lang": "english",
+      "language": "EN",
+      "url": "/subtitle/4100001-4200001.zip",
+      "season": 1,
+      "episode": 2,
+      "full_season": true,
+      "hi": false
+    },
+    {
+      "release_name": "Breaking.Bad.S01E02.720p.WEB",
+      "name": "Breaking Bad",
+      "lang": "english",
+      "language": "EN",
+      "url": "/subtitle/4100002-4200002.zip",
+      "season": 1,
+      "episode": 2,
+      "full_season": false,
+      "hi": false
+    },
+    {
+      "release_name": "Breaking.Bad.S01E02.Vietnamese",
+      "name": "Breaking Bad",
+      "lang": "vietnamese",
+      "language": "VI",
+      "url": "/subtitle/4100003-4200003.zip",
+      "season": 1,
+      "episode": 2,
+      "full_season": false,
+      "hi": false
+    }
+  ]
+}
