@@ -66,13 +66,156 @@ $env:CUESYNC_PUBLIC_URL = "https://pc.tailnet.ts.net"
 .venv\Scripts\cuesync
 ```
 
-Keep `CUESYNC_HOST` at `127.0.0.1`. The tunnel connects from the same PC, so nothing else
-on your network needs to reach the server.
+When you run CueSync directly, keep `CUESYNC_HOST` at `127.0.0.1`. The tunnel connects
+from the same PC, so nothing else on your network needs to reach the server. The Docker
+image sets `0.0.0.0` itself, see [Run with Docker](#run-with-docker).
 
 Set `CUESYNC_PUBLIC_URL` whenever you use a tunnel. The tunnel hands requests to CueSync
 over local `http://`, so the address CueSync sees is not the one Stremio can use. The
 install link on `/configure` is built from this setting. The value must start with
 `http://` or `https://`. CueSync refuses to start otherwise. A trailing `/` is ignored.
+
+## Data directory
+
+CueSync keeps its cache database and files in the data directory (`CUESYNC_DATA_DIR`).
+
+- Run directly: `./data` under the folder you start CueSync in.
+- Docker: `/data` in the `cuesync-data` volume.
+- Windows task: `%LOCALAPPDATA%\CueSync`.
+
+The data directory holds only cached subtitles, audio analysis and sync results. Deleting
+it only clears the cache. CueSync rebuilds it as you watch.
+
+## Run with Docker
+
+The image holds Python, ffmpeg and CueSync. It runs as a non-root user and stores its
+cache in the `/data` volume. `compose.yaml` runs it next to a Tailscale container that
+publishes it over HTTPS with Funnel. Both containers start again after a reboot.
+
+Prerequisites:
+
+- Docker with Compose v2.
+- A Tailscale [auth key](https://login.tailscale.com/admin/settings/keys).
+- HTTPS certificates and Funnel turned on for your tailnet, as in
+  [Tailscale Funnel](#tailscale-funnel).
+
+Steps:
+
+1. Create a `.env` file next to `compose.yaml`:
+
+   ```sh
+   TS_AUTHKEY=tskey-auth-...
+   CUESYNC_PUBLIC_URL=https://cuesync.<tailnet>.ts.net
+   ```
+
+   The Tailscale container uses the host name `cuesync`, so the address has that form.
+2. Start both containers:
+
+   ```sh
+   docker compose up -d --build
+   ```
+
+3. Check them:
+
+   ```sh
+   docker compose ps
+   docker compose logs
+   ```
+
+The containers share one network and Compose publishes no host port. Funnel reaches
+CueSync on `127.0.0.1:7000` inside that network, and nothing else on your network can
+reach it. `deploy/tailscale/serve.json` holds the Funnel setup, so you do not run
+`tailscale funnel` yourself. Then open `<public URL>/configure` as in
+[Install in Stremio](#install-in-stremio).
+
+To run only the image, with your own tunnel:
+
+```sh
+docker build -t cuesync .
+docker run -d --restart unless-stopped -p 127.0.0.1:7000:7000 -v cuesync-data:/data \
+  -e CUESYNC_PUBLIC_URL=https://pc.tailnet.ts.net cuesync
+```
+
+The image sets `CUESYNC_HOST=0.0.0.0` so the published port reaches the server, and
+`CUESYNC_DATA_DIR=/data`. The data lives in the `cuesync-data` volume.
+
+## Start automatically on Windows
+
+Task Scheduler starts CueSync when you log in. It is built into Windows, needs no extra
+download and stores no password. The task starts `pythonw.exe`, so no console window
+appears.
+
+1. Install CueSync as in [Install](#install).
+2. Store the settings as user environment variables, then open a new terminal. The data
+   directory is an absolute path so the cache stays in one place, whatever folder the task
+   starts in.
+
+   ```powershell
+   setx CUESYNC_PUBLIC_URL https://pc.tailnet.ts.net
+   setx CUESYNC_DATA_DIR "$env:LOCALAPPDATA\CueSync"
+   ```
+
+3. Expose the port once. Tailscale runs as a Windows service, and this setting survives
+   reboots:
+
+   ```powershell
+   tailscale funnel --bg 7000
+   ```
+
+4. In PowerShell, from the CueSync folder, register the task:
+
+   ```powershell
+   $action = New-ScheduledTaskAction -Execute "$PWD\.venv\Scripts\pythonw.exe" -Argument "-m cuesync" -WorkingDirectory $PWD
+   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+   Register-ScheduledTask -TaskName CueSync -Action $action -Trigger $trigger -Settings $settings
+   ```
+
+   The time limit is zero because Task Scheduler stops a task after three days otherwise.
+5. Start it now and check `http://127.0.0.1:7000/health`:
+
+   ```powershell
+   Start-ScheduledTask CueSync
+   ```
+
+6. To stop or remove it:
+
+   ```powershell
+   Stop-ScheduledTask CueSync
+   Unregister-ScheduledTask CueSync
+   ```
+
+A task that runs before anyone logs in needs your password stored in Task Scheduler, so
+this setup starts at logon instead.
+
+## Update
+
+The cache survives updates because it lives in the data directory.
+
+Docker:
+
+```sh
+git pull
+docker compose up -d --build
+```
+
+Windows:
+
+```powershell
+Stop-ScheduledTask CueSync
+git pull
+.venv\Scripts\pip install -e .
+Start-ScheduledTask CueSync
+```
+
+Linux:
+
+```sh
+git pull
+scripts/setup.sh
+```
+
+Then restart `.venv/bin/cuesync`.
 
 ## Tailscale Funnel
 

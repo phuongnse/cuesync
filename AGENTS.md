@@ -47,6 +47,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/retime.py`: runs stream lookup, debrid link, audio windows and sync for the top subtitles and returns the re-timed copies.
 - `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window subtitle offsets by FFT cross-correlation, and the global correction (frame-rate ratio and shift) with its verdict.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
+- `Dockerfile`, `compose.yaml`, `deploy/`: the Docker image, the Compose example and the Tailscale serve config.
 - `tests/`: pytest tests.
 
 Add new modules under `src/cuesync/` by concern (for example `sources/`, `stream/`,
