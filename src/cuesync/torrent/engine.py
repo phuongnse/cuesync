@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -62,11 +62,23 @@ class EngineTorrent(Protocol):
 
 class Engine(Protocol):
     def add(
-        self, info_hash: str, save_path: Path, *, download_limit: int, upload_limit: int
-    ) -> EngineTorrent: ...
+        self,
+        info_hash: str,
+        save_path: Path,
+        *,
+        trackers: Sequence[str],
+        download_limit: int,
+        upload_limit: int,
+    ) -> EngineTorrent:
+        """Start the torrent. `trackers` come on top of the built-in ones."""
+        ...
 
     async def remove(self, torrent: EngineTorrent) -> None:
         """Stop the torrent and delete its files."""
+        ...
+
+    def close(self) -> None:
+        """Stop the session. The engine is not used afterwards."""
         ...
 
 
@@ -137,12 +149,19 @@ class LibtorrentEngine:
         return self._session
 
     def add(
-        self, info_hash: str, save_path: Path, *, download_limit: int, upload_limit: int
+        self,
+        info_hash: str,
+        save_path: Path,
+        *,
+        trackers: Sequence[str],
+        download_limit: int,
+        upload_limit: int,
     ) -> EngineTorrent:
         lt = _lt()
         session = self._get_session()
-        magnet = f"magnet:?xt=urn:btih:{info_hash}" + "".join(f"&tr={t}" for t in TRACKERS)
-        params = lt.parse_magnet_uri(magnet)
+        params = lt.parse_magnet_uri(f"magnet:?xt=urn:btih:{info_hash}")
+        # Set on the parameters, not in the magnet, so a tracker URL needs no escaping.
+        params.trackers = list(dict.fromkeys([*trackers, *TRACKERS]))
         params.save_path = str(save_path)
         params.flags |= lt.torrent_flags.default_dont_download
         params.flags &= ~lt.torrent_flags.auto_managed
@@ -163,3 +182,8 @@ class LibtorrentEngine:
             await asyncio.sleep(REMOVE_POLL_S)
         if handle.is_valid():
             log.warning("torrent was not removed in time")
+
+    def close(self) -> None:
+        if self._session is not None:
+            self._session.pause()
+            self._session = None

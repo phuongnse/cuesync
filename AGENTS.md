@@ -22,9 +22,13 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 2. CueSync fetches candidate subtitles from the configured sources (OpenSubtitles, SubDL)
    and normalizes them to UTF-8 SRT.
 3. It finds the torrent behind the played file (Torrentio lookup matched on filename and
-   size) and gets a direct HTTPS link to that file from the user's debrid service.
+   size) and gets a direct HTTPS link to that file from the user's debrid service. A user
+   with no debrid service at all can opt in (`CUESYNC_TORRENT_FALLBACK=1`) to reading the
+   file from the torrent through the torrent reader instead. Debrid always wins, and a debrid
+   service that gives no link never falls back to the torrent.
 4. It extracts a few short audio windows spread over the file with ffmpeg (HTTP range
-   reads; never the whole file).
+   reads; never the whole file). Over a torrent the windows are read one at a time, with
+   longer timeouts.
 5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle,
    estimates the offset in each window, and keeps the ratio `a` and shift `b` in
    `t' = a·t + b` that most windows agree on.
@@ -47,10 +51,10 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles, SubDL).
 - `src/cuesync/debrid/`: the `DebridProvider` protocol and the debrid clients (Real-Debrid, TorBox) that turn a `StreamRef` into a direct HTTPS link.
 - `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
-- `src/cuesync/torrent/`: reads one file of a torrent piece by piece and serves it on a loopback HTTP URL for ffmpeg, using libtorrent from the optional `torrent` extra. The sync jobs do not use it yet.
+- `src/cuesync/torrent/`: reads one file of a torrent piece by piece and serves it on a loopback HTTP URL for ffmpeg, using libtorrent from the optional `torrent` extra. It also reads the `CUESYNC_TORRENT_*` settings (`settings.py`). The sync jobs use it only for the opt-in torrent fallback.
 - `src/cuesync/cache.py`: the SQLite plus files cache of searches, subtitles, speech timelines and sync results.
-- `src/cuesync/retime.py`: runs stream lookup, debrid link, audio windows and sync for the top subtitles and returns the correction found for each.
-- `src/cuesync/jobs.py`: the in-memory background sync jobs, deduplicated, limited in number and time.
+- `src/cuesync/retime.py`: runs stream lookup, debrid link (or the torrent stage for a user without debrid, when the fallback is on), audio windows and sync for the top subtitles and returns the correction found for each.
+- `src/cuesync/jobs.py`: the in-memory background sync jobs, deduplicated, limited in number and time. The time limit grows to cover the torrent time limit when the torrent fallback is on.
 - `src/cuesync/placeholder.py`: the "being synced" subtitle served while a job runs.
 - `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window subtitle offsets by FFT cross-correlation, and the global correction (frame-rate ratio and shift) with its verdict.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.

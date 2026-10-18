@@ -6,6 +6,7 @@ from cuesync.torrent.engine import LibtorrentEngine, TorrentError, TorrentLimitE
 from cuesync.torrent.pieces import index_ranges, pieces_for_range
 from cuesync.torrent.reader import Limits, TorrentReader
 from cuesync.torrent.server import LocalServer, MemorySource
+from cuesync.torrent.settings import TorrentSettings, torrent_settings
 
 __all__ = [
     "LibtorrentEngine",
@@ -15,6 +16,8 @@ __all__ = [
     "TorrentError",
     "TorrentLimitError",
     "TorrentReader",
+    "TorrentSettings",
     "index_ranges",
     "pieces_for_range",
+    "torrent_settings",
 ]

@@ -11,7 +11,7 @@ RUN useradd --create-home --uid 1000 cuesync \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[torrent]"
 
 ENV CUESYNC_HOST=0.0.0.0 \
     CUESYNC_PORT=7000 \

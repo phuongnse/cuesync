@@ -1,9 +1,9 @@
 """Re-time the best subtitle of each language to the audio of the played file.
 
-The stages run in order: stream lookup, debrid link, audio windows and sync. Every stage is
-injectable so tests can fake it. A subtitle that could not be aligned is missing from the
-result, so the caller falls back to the original. The debrid link is a secret and is never
-logged.
+The stages run in order: stream lookup, debrid link (or the torrent stage, when the user has
+no debrid service), audio windows and sync. Every stage is injectable so tests can fake it. A
+subtitle that could not be aligned is missing from the result, so the caller falls back to the
+original. The debrid link is a secret and is never logged.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 
 import httpx
@@ -27,6 +28,7 @@ from cuesync.stream import StreamRef, find_stream
 from cuesync.stremio import Extra, VideoId
 from cuesync.subtitles import Cue
 from cuesync.sync import Correction, align, audio_speech
+from cuesync.torrent import Limits, TorrentError
 
 # Each re-timed subtitle costs a download from the user's daily source quota.
 RETIME_PER_LANGUAGE = 1
@@ -42,18 +44,33 @@ class Stages:
         [httpx.AsyncClient, VideoId, str | None, int | None], Awaitable[StreamRef | None]
     ] = find_stream
     debrid: Callable[[UserConfig, httpx.AsyncClient], DebridProvider | None] = debrid_provider
-    probe: Callable[[str], Awaitable[MediaInfo]] = audio.probe
+    probe: Callable[..., Awaitable[MediaInfo]] = audio.probe
     extract_windows: Callable[..., Awaitable[list[AudioWindow]]] = audio.extract_windows
     align: Callable[[Sequence[tuple[float, np.ndarray]], Sequence[Cue]], Correction] = align
+    # Opens the played file of a torrent as a local URL. None unless the torrent fallback is on.
+    # It is used only for a user without a debrid service.
+    torrent: Callable[[StreamRef], AbstractAsyncContextManager[str]] | None = None
+    torrent_timeout_s: float = Limits().time_s
 
 
-async def _prepare_audio(stages: Stages, url: str) -> list[tuple[float, np.ndarray]] | None:
-    """Read the audio windows once and turn each into a speech timeline."""
+async def _prepare_audio(
+    stages: Stages, source: AbstractAsyncContextManager[str], over_torrent: bool
+) -> list[tuple[float, np.ndarray]] | None:
+    """Read the audio windows once and turn each into a speech timeline.
+
+    Over a torrent, the windows are read one at a time and each read may take long.
+    """
+    timeout = stages.torrent_timeout_s
+    probe_args = {"timeout": timeout} if over_torrent else {}
+    extract_args = {"max_concurrent": 1, "timeout_s": timeout} if over_torrent else {}
     try:
-        info = await stages.probe(url)
-        track = select_audio_track(info.audio_tracks, None)
-        windows = await stages.extract_windows(url, info.duration_s, track=track)
-    except AudioError as exc:
+        async with source as url:
+            info = await stages.probe(url, **probe_args)
+            track = select_audio_track(info.audio_tracks, None)
+            windows = await stages.extract_windows(
+                url, info.duration_s, track=track, **extract_args
+            )
+    except (AudioError, TorrentError) as exc:
         log.warning("could not read the audio: %s", exc)
         return None
     return await asyncio.to_thread(lambda: [(w.start_s, audio_speech(w.samples)) for w in windows])
@@ -92,21 +109,29 @@ def pick(ranked: Sequence[Candidate]) -> list[Candidate]:
     return picked
 
 
-async def _direct_url(
+async def _audio_source(
     stages: Stages,
     client: httpx.AsyncClient,
     config: UserConfig,
     video: VideoId,
     extra: Extra,
-) -> str | None:
-    """The debrid link to the played file, or None when any stage along the way gives none."""
+) -> tuple[AbstractAsyncContextManager[str], bool] | None:
+    """Where to read the audio, and whether that is a torrent. None when there is no way.
+
+    Debrid always wins. A user with a debrid service never falls back to the torrent, even when
+    the debrid service gives no link.
+    """
     provider = stages.debrid(config, client)
-    if provider is None:
+    if provider is None and stages.torrent is None:
         return None
     stream = await stages.find_stream(client, video, extra.filename, extra.video_size)
     if stream is None:
         return None
-    return await provider.direct_url(stream)
+    if provider is None:
+        assert stages.torrent is not None
+        return stages.torrent(stream), True
+    url = await provider.direct_url(stream)
+    return None if url is None else (nullcontext(url), False)
 
 
 async def _no_audio() -> None:
@@ -145,19 +170,21 @@ async def retime(
     todo = [candidate for candidate in picked if candidate not in known]
 
     timelines = None
-    url = None
+    source = None
     cacheable = bool(video_hash) and extra.video_size is not None
     if todo:
         if cacheable:
             timelines = cache.get_timeline(video_hash, extra.video_size)
         if timelines is None:
-            url = await _direct_url(stages, client, config, video, extra)
-            if url is None:
+            source = await _audio_source(stages, client, config, video, extra)
+            if source is None:
                 todo = []
 
     if todo:
         audio_task = (
-            _prepare_audio(stages, url) if timelines is None and url is not None else _no_audio()
+            _prepare_audio(stages, *source)
+            if timelines is None and source is not None
+            else _no_audio()
         )
         downloaded, fresh = await asyncio.gather(_download_all(cache, sources, todo), audio_task)
         if fresh is not None:

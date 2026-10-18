@@ -51,6 +51,11 @@ Set these in the environment before you start CueSync.
 | `CUESYNC_TORRENTIO_URL` | `https://torrentio.strem.fun` | A Torrentio-compatible server that CueSync asks for the torrent behind the played file. It may include a config path. |
 | `CUESYNC_DATA_DIR` | `./data` | Where the cache database and its files live. |
 | `CUESYNC_CACHE_MAX_MB` | `500` | Size limit of the stored subtitle and audio files. The least recently used files are deleted first. |
+| `CUESYNC_TORRENT_FALLBACK` | `0` | `1` reads the audio over BitTorrent for users without a debrid service. Only `0` and `1` are accepted. See [Without a debrid service](#without-a-debrid-service). |
+| `CUESYNC_TORRENT_TIMEOUT_S` | `240` | Time limit in seconds of one torrent read, including the wait for the torrent metadata. |
+| `CUESYNC_TORRENT_MAX_MB` | `1024` | Limit in MiB of the data one torrent read downloads. |
+| `CUESYNC_TORRENT_DOWN_KBPS` | `0` | Download speed cap in KiB per second. `0` means no cap. |
+| `CUESYNC_TORRENT_UP_KBPS` | `256` | Upload speed cap in KiB per second. `0` means no cap. |
 
 Linux:
 
@@ -75,6 +80,35 @@ over local `http://`, so the address CueSync sees is not the one Stremio can use
 install link on `/configure` is built from this setting. The value must start with
 `http://` or `https://`. CueSync refuses to start otherwise. A trailing `/` is ignored.
 
+## Without a debrid service
+
+CueSync can re-time subtitles without a debrid service. It then reads the audio windows
+straight from the torrent. Use this only when you self-host on your own machine.
+
+Turn it on with `CUESYNC_TORRENT_FALLBACK=1`. It needs libtorrent, which comes from the
+`torrent` extra:
+
+```sh
+.venv/bin/pip install -e ".[torrent]"
+```
+
+On Windows, install `.[dev,torrent]` instead. The Docker image already includes it.
+CueSync refuses to start when the fallback is on and libtorrent is missing.
+
+Things to know:
+
+- Debrid always wins. A user with a debrid service never uses the torrent, even when the
+  debrid service gives no link.
+- CueSync downloads parts of the file over BitTorrent and uploads to other peers from your
+  IP address. The upload speed is capped by `CUESYNC_TORRENT_UP_KBPS`.
+- The first sync is slower than with debrid. The audio windows are read one at a time.
+- A read stops at `CUESYNC_TORRENT_TIMEOUT_S` or `CUESYNC_TORRENT_MAX_MB`. The sync then
+  uses the windows read so far, or fails.
+- In Docker, no BitTorrent port is published, so peers cannot connect in. Reads can be
+  slower.
+- Torrent data is temporary and lives in `<data dir>/torrents`. CueSync deletes it after each
+  read and at startup.
+
 ## Data directory
 
 CueSync keeps its cache database and files in the data directory (`CUESYNC_DATA_DIR`).
@@ -83,12 +117,12 @@ CueSync keeps its cache database and files in the data directory (`CUESYNC_DATA_
 - Docker: `/data` in the `cuesync-data` volume.
 - Windows task: `%LOCALAPPDATA%\CueSync`.
 
-The data directory holds only cached subtitles, audio analysis and sync results. Deleting
-it only clears the cache. CueSync rebuilds it as you watch.
+The data directory holds only cached subtitles, audio analysis and sync results, plus
+temporary torrent data while the torrent fallback reads. Deleting it only clears the cache. CueSync rebuilds it as you watch.
 
 ## Run with Docker
 
-The image holds Python, ffmpeg and CueSync. It runs as a non-root user and stores its
+The image holds Python, ffmpeg, libtorrent and CueSync. It runs as a non-root user and stores its
 cache in the `/data` volume. `compose.yaml` runs it next to a Tailscale container that
 publishes it over HTTPS with Funnel. Both containers start again after a reboot.
 

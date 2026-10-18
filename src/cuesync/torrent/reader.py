@@ -140,6 +140,7 @@ class TorrentReader:
             torrent = self._engine.add(
                 stream.info_hash,
                 folder,
+                trackers=stream.trackers,
                 download_limit=self._limits.download_rate,
                 upload_limit=self._limits.upload_rate,
             )
