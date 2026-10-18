@@ -37,6 +37,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/__main__.py`: `python -m cuesync` / `cuesync` entry point (uvicorn).
 - `src/cuesync/config.py`: user settings, their URL encoding and log redaction.
 - `src/cuesync/subtitles/`: subtitle model, decoding, SRT/VTT/ASS parsing, SRT writing and zip picking.
+- `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles).
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
 
