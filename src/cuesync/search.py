@@ -7,6 +7,7 @@ import base64
 import binascii
 import json
 import logging
+import math
 import os
 import re
 from collections.abc import Sequence
@@ -17,6 +18,7 @@ from cuesync.config import UserConfig
 from cuesync.sources.base import Candidate, SubtitleRequest, SubtitleSource
 from cuesync.sources.opensubtitles import OpenSubtitlesSource
 from cuesync.sources.subdl import SubDLSource
+from cuesync.sync import RATIOS
 
 # Stremio gives up on slow subtitle responses, so a slow source is left out.
 SEARCH_BUDGET = 5.0
@@ -122,3 +124,39 @@ def decode_key(key: str) -> tuple[str, str, str]:
         raise ValueError("malformed subtitle key")
     source, source_id, language = data
     return source, source_id, language
+
+
+def encode_retimed_key(candidate: Candidate, scale: float, offset_ms: int) -> str:
+    """An opaque key for a re-timed subtitle: its source and the correction `t' = scale*t + b`.
+
+    It holds no secrets, so links work after a restart without any stored state.
+    """
+    raw = json.dumps(
+        [candidate.source, candidate.source_id, candidate.language, scale, offset_ms],
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_retimed_key(key: str) -> tuple[str, str, str, float, int]:
+    """Return (source, source id, language, scale, offset in ms).
+
+    Raise ValueError if the key is malformed or the scale is not a known frame-rate ratio.
+    """
+    try:
+        padded = key + "=" * (-len(key) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+    except (binascii.Error, UnicodeError, ValueError):
+        raise ValueError("malformed subtitle key") from None
+    if not isinstance(data, list) or len(data) != 5:
+        raise ValueError("malformed subtitle key")
+    source, source_id, language, scale, offset_ms = data
+    if not all(isinstance(item, str) for item in (source, source_id, language)):
+        raise ValueError("malformed subtitle key")
+    if isinstance(scale, bool) or not isinstance(scale, int | float):
+        raise ValueError("malformed subtitle key")
+    if isinstance(offset_ms, bool) or not isinstance(offset_ms, int):
+        raise ValueError("malformed subtitle key")
+    if not any(math.isclose(scale, ratio) for ratio in RATIOS):
+        raise ValueError("unknown speed ratio")
+    return source, source_id, language, float(scale), offset_ms
