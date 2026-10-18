@@ -310,7 +310,7 @@ def test_srt_endpoint_serves_utf8_srt():
     assert (download.source, download.source_id, download.language) == ("fake", "7", "vie")
 
 
-def test_srt_endpoint_serves_repeat_fetches_from_memory():
+def test_srt_endpoint_serves_repeat_fetches_from_the_cache():
     source = FakeSource()
     test_client = fake_client(source)
     first = test_client.get(srt_path())
@@ -319,15 +319,52 @@ def test_srt_endpoint_serves_repeat_fetches_from_memory():
     assert len(source.downloads) == 1
 
 
-def test_srt_cache_keeps_only_the_latest_files(monkeypatch):
-    monkeypatch.setattr(app_module, "SRT_CACHE_SIZE", 2)
-    source = FakeSource()
+def test_srt_link_is_served_by_a_fresh_app_without_a_download():
+    source = FakeSource(cues=(Cue(1000, 2500, "Xin chào"),))
+    first = fake_client(source).get(srt_path("7", "vie"))
+    other = FakeSource()
+    second = fake_client(other).get(srt_path("7", "vie"))
+    assert second.status_code == 200
+    assert second.content == first.content
+    assert len(source.downloads) == 1
+    assert other.downloads == []
+
+
+def test_two_subtitles_requests_search_once():
+    source = FakeSource(candidates=[fake_candidate("1")])
     test_client = fake_client(source)
-    for source_id in ("1", "2", "3"):
-        test_client.get(srt_path(source_id))
-    test_client.get(srt_path("3"))
-    test_client.get(srt_path("1"))
-    assert [d.source_id for d in source.downloads] == ["1", "2", "3", "1"]
+    path = f"/{TOKEN}/subtitles/movie/tt1375666/videoHash=abc&filename=a.mkv.json"
+    first = test_client.get(path)
+    second = test_client.get(path)
+    assert first.json() == second.json()
+    assert len(source.searches) == 1
+
+
+def test_cache_lives_in_the_data_dir_from_the_environment(tmp_path, monkeypatch):
+    data = tmp_path / "elsewhere"
+    monkeypatch.setenv("CUESYNC_DATA_DIR", str(data))
+    assert not data.exists()
+    test_client = fake_client(FakeSource())
+    assert not data.exists()
+    test_client.get(srt_path())
+    assert (data / "cuesync.sqlite3").exists()
+
+
+def test_cache_size_limit_comes_from_the_environment(monkeypatch):
+    assert app_module.cache_max_bytes(None) == 500 * 1024 * 1024
+    assert app_module.cache_max_bytes("  ") == 500 * 1024 * 1024
+    assert app_module.cache_max_bytes("2") == 2 * 1024 * 1024
+    monkeypatch.setenv("CUESYNC_CACHE_MAX_MB", "7")
+    assert create_app().state.cache._max_bytes == 7 * 1024 * 1024
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "abc", "1.5"])
+def test_cache_size_limit_must_be_a_positive_whole_number(value, monkeypatch):
+    with pytest.raises(ValueError, match="CUESYNC_CACHE_MAX_MB"):
+        app_module.cache_max_bytes(value)
+    monkeypatch.setenv("CUESYNC_CACHE_MAX_MB", value)
+    with pytest.raises(ValueError, match="CUESYNC_CACHE_MAX_MB"):
+        create_app()
 
 
 @pytest.mark.parametrize("key", ["garbage", "e30", "WyJhIl0"])

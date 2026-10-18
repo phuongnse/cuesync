@@ -10,9 +10,11 @@ from fastapi.testclient import TestClient
 
 from cuesync.app import create_app
 from cuesync.audio import AudioTrack, AudioWindow, MediaInfo
+from cuesync.cache import FAILURE_RETRY_S, Cache
 from cuesync.config import UserConfig, encode_config
 from cuesync.retime import Stages
 from cuesync.search import encode_key
+from cuesync.sources.base import Candidate
 from cuesync.stream import StreamRef
 from cuesync.sync import Correction, Verdict
 from test_app import FakeSource, fake_candidate
@@ -25,6 +27,7 @@ TWO_LANGUAGES = encode_config(
 )
 NO_DEBRID = encode_config(UserConfig(languages=["vie"]))
 PATH = "subtitles/movie/tt1375666/videoHash=abc&filename=a.mkv.json"
+SIZED_PATH = "subtitles/movie/tt1375666/videoHash=abc&videoSize=123&filename=a.mkv.json"
 SYNCED = Correction(Verdict.SYNCED, 1.0, 2000, 5, 10.0)
 STREAM = StreamRef("a" * 40, 0, "a.mkv", 123)
 FAILED = Correction(Verdict.FAILED, 1.0, 0, 0, 0.0)
@@ -71,13 +74,17 @@ class FakeStages:
         return Stages(self.find_stream, self.debrid, self.probe, self.extract_windows, self.align)
 
 
-def make_client(source: FakeSource, fake: FakeStages, **kwargs) -> TestClient:
-    app = create_app(source_factory=lambda config, http: [source], stages=fake.stages(), **kwargs)
+def make_client(
+    source: FakeSource, fake: FakeStages, cache: Cache | None = None, **kwargs
+) -> TestClient:
+    app = create_app(
+        source_factory=lambda config, http: [source], stages=fake.stages(), cache=cache, **kwargs
+    )
     return TestClient(app)
 
 
-def entries_of(client: TestClient, token: str = TOKEN) -> list[dict]:
-    response = client.get(f"/{token}/{PATH}")
+def entries_of(client: TestClient, token: str = TOKEN, path: str = PATH) -> list[dict]:
+    response = client.get(f"/{token}/{path}")
     assert response.status_code == 200
     return response.json()["subtitles"]
 
@@ -105,7 +112,7 @@ def test_retimed_entry_serves_the_shifted_srt():
     assert response.content.decode() == "1\n00:00:03,000 --> 00:00:04,500\nHello there\n\n"
 
 
-def test_original_is_served_from_memory_after_retiming():
+def test_original_is_served_from_the_cache_after_retiming():
     source = FakeSource(candidates=[fake_candidate("1", "vie")])
     client = make_client(source, FakeStages())
     entries = entries_of(client)
@@ -200,3 +207,70 @@ def test_audio_is_read_once_for_every_language():
     assert len(entries) == 4
     assert fake.extract_calls == 1
     assert fake.align_calls == 2
+
+
+def test_second_request_from_a_fresh_app_is_answered_from_the_cache(tmp_path):
+    fake = FakeStages()
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    first = entries_of(make_client(source, fake, Cache(tmp_path)), path=SIZED_PATH)
+    calls = (fake.stream_calls, fake.extract_calls, fake.align_calls, len(source.downloads))
+    assert calls == (1, 1, 1, 1)
+    second = entries_of(make_client(source, fake, Cache(tmp_path)), path=SIZED_PATH)
+    assert [e["id"] for e in second[:1]] == ["cuesync-vie-1"]
+    assert second == first
+    assert (fake.stream_calls, fake.extract_calls, fake.align_calls, len(source.downloads)) == calls
+
+
+def test_stored_sync_result_is_used_without_a_debrid_service(tmp_path):
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    entries_of(make_client(source, FakeStages(), Cache(tmp_path)))
+    fake = FakeStages(debrid_enabled=False)
+    entries = entries_of(make_client(source, fake, Cache(tmp_path)), NO_DEBRID)
+    assert [e["id"] for e in entries[:1]] == ["cuesync-vie-1"]
+    assert fake.stream_calls == 0
+
+
+def test_stored_timeline_aligns_a_new_subtitle_without_reading_the_audio(tmp_path):
+    fake = FakeStages()
+    first = FakeSource(candidates=[fake_candidate("1", "vie")])
+    entries_of(make_client(first, fake, Cache(tmp_path)), path=SIZED_PATH)
+    second = FakeSource(name="other", candidates=[Candidate("other", "2", "vie", "")])
+    entries = entries_of(make_client(second, fake, Cache(tmp_path)), path=SIZED_PATH)
+    assert [e["id"] for e in entries[:1]] == ["cuesync-vie-1"]
+    assert [d.source_id for d in second.downloads] == ["2"]
+    assert fake.stream_calls == 1
+    assert fake.extract_calls == 1
+    assert fake.align_calls == 2
+
+
+def test_timeline_is_not_stored_without_a_video_size(tmp_path):
+    fake = FakeStages()
+    first = FakeSource(candidates=[fake_candidate("1", "vie")])
+    entries_of(make_client(first, fake, Cache(tmp_path)))
+    second = FakeSource(name="other", candidates=[Candidate("other", "2", "vie", "")])
+    entries_of(make_client(second, fake, Cache(tmp_path)))
+    assert fake.extract_calls == 2
+
+
+def test_failed_sync_is_not_tried_again_for_a_day(tmp_path):
+    now = [1000.0]
+    cache = Cache(tmp_path, clock=lambda: now[0])
+    fake = FakeStages(correction=FAILED)
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    entries_of(make_client(source, fake, cache))
+    assert fake.align_calls == 1
+    now[0] += FAILURE_RETRY_S - 1
+    entries = entries_of(make_client(source, fake, cache))
+    assert [e["id"] for e in entries] == [encode_key(fake_candidate("1", "vie"))]
+    assert (fake.stream_calls, fake.align_calls) == (1, 1)
+    now[0] += 1
+    entries_of(make_client(source, fake, cache))
+    assert (fake.stream_calls, fake.align_calls) == (2, 2)
+
+
+def test_stage_failures_are_not_stored(tmp_path):
+    cache = Cache(tmp_path)
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    assert len(entries_of(make_client(source, FakeStages(stream=None), cache))) == 1
+    entries = entries_of(make_client(source, FakeStages(), cache))
+    assert [e["id"] for e in entries[:1]] == ["cuesync-vie-1"]

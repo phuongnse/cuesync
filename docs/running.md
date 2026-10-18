@@ -49,6 +49,8 @@ Set these in the environment before you start CueSync.
 | `CUESYNC_PORT` | `7000` | Port the server listens on. |
 | `CUESYNC_PUBLIC_URL` | from the request | The HTTPS address that Stremio uses to reach CueSync. |
 | `CUESYNC_TORRENTIO_URL` | `https://torrentio.strem.fun` | A Torrentio-compatible server that CueSync asks for the torrent behind the played file. It may include a config path. |
+| `CUESYNC_DATA_DIR` | `./data` | Where the cache database and its files live. |
+| `CUESYNC_CACHE_MAX_MB` | `500` | Size limit of the stored subtitle and audio files. The least recently used files are deleted first. |
 
 Linux:
 
