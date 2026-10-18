@@ -9,16 +9,25 @@ from __future__ import annotations
 import html
 import logging
 import os
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from importlib.resources import files
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from . import __version__
 from .config import InvalidConfig, RedactConfigFilter, UserConfig, decode_config
-from .stremio import VideoId, parse_extra, parse_video_id, raw_extra_segment
+from .search import build_sources, decode_key, encode_key, gather_candidates, rank
+from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
+from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
+from .subtitles import write_srt
+
+SRT_CACHE_SIZE = 100
 
 MANIFEST = {
     "id": "community.cuesync",
@@ -78,9 +87,50 @@ def redact_access_log() -> None:
         access_log.addFilter(RedactConfigFilter())
 
 
-def create_app(public_url: str | None = None) -> FastAPI:
+async def find_subtitles(
+    request: Request, config: UserConfig, video: VideoId, extra: Extra
+) -> dict:
+    """Search the user's sources and list the best subtitles, each linked to its `.srt`."""
+    sources = request.app.state.sources(config, request.app.state.http)
+    candidates = await gather_candidates(
+        sources,
+        SubtitleRequest(
+            imdb_id=video.imdb_id,
+            season=video.season,
+            episode=video.episode,
+            languages=tuple(config.languages),
+            video_hash=extra.video_hash,
+            video_size=extra.video_size,
+            filename=extra.filename,
+        ),
+    )
+    ranked = rank(candidates, config.languages, extra.filename, config.max_per_language)
+    prefix = f"{base_url(request)}/{request.path_params['config']}/sub"
+    return {
+        "subtitles": [
+            {"id": key, "url": f"{prefix}/{key}.srt", "lang": candidate.language}
+            for candidate in ranked
+            for key in (encode_key(candidate),)
+        ]
+    }
+
+
+def create_app(
+    public_url: str | None = None,
+    source_factory: Callable[[UserConfig, httpx.AsyncClient], Sequence[SubtitleSource]]
+    | None = None,
+) -> FastAPI:
     redact_access_log()
-    app = FastAPI(title="CueSync", version=__version__)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        yield
+        await app.state.http.aclose()
+
+    app = FastAPI(title="CueSync", version=__version__, lifespan=lifespan)
+    app.state.sources = source_factory or build_sources
+    app.state.http = httpx.AsyncClient()
+    app.state.srt_cache = OrderedDict()  # subtitle key -> SRT bytes, least recently used first
     app.state.public_url = normalize_public_url(
         public_url if public_url is not None else os.environ.get("CUESYNC_PUBLIC_URL")
     )
@@ -109,20 +159,46 @@ def create_app(public_url: str | None = None) -> FastAPI:
         return configure_page(base_url(request))
 
     @app.get("/{config}/subtitles/{type}/{id}.json")
-    def subtitles(type: str, id: str, config: ConfigDep) -> dict:
-        _parse_id_or_400(id)
-        return {"subtitles": []}
+    async def subtitles(request: Request, type: str, id: str, config: ConfigDep) -> dict:
+        video = _parse_id_or_400(id)
+        return await find_subtitles(request, config, video, Extra(None, None, None))
 
     # `extra:path` because Starlette matches the decoded path: an encoded `/` in the
     # filename would otherwise end the segment early and give a 404.
     @app.get("/{config}/subtitles/{type}/{id}/{extra:path}.json")
-    def subtitles_with_extra(
+    async def subtitles_with_extra(
         request: Request, type: str, id: str, extra: str, config: ConfigDep
     ) -> dict:
-        _parse_id_or_400(id)
+        video = _parse_id_or_400(id)
         raw = request.scope.get("raw_path")
-        parse_extra(raw_extra_segment(raw) if raw is not None else extra)
-        return {"subtitles": []}
+        parsed = parse_extra(raw_extra_segment(raw) if raw is not None else extra)
+        return await find_subtitles(request, config, video, parsed)
+
+    @app.get("/{config}/sub/{key}.srt")
+    async def subtitle_file(request: Request, key: str, config: ConfigDep) -> Response:
+        cache: OrderedDict[str, bytes] = request.app.state.srt_cache
+        body = cache.get(key)
+        if body is None:
+            try:
+                source_name, source_id, language = decode_key(key)
+            except ValueError:
+                raise HTTPException(404, "Unknown subtitle") from None
+            sources = request.app.state.sources(config, request.app.state.http)
+            source = next((s for s in sources if s.name == source_name), None)
+            if source is None:
+                raise HTTPException(404, "Unknown subtitle")
+            candidate = Candidate(source_name, source_id, language, release_name="")
+            try:
+                subtitle = await source.download(candidate)
+            except SourceError as exc:
+                raise HTTPException(502, str(exc)) from None
+            body = write_srt(subtitle.cues)
+            cache[key] = body
+            while len(cache) > SRT_CACHE_SIZE:
+                cache.popitem(last=False)
+        else:
+            cache.move_to_end(key)
+        return Response(body, media_type="application/x-subrip; charset=utf-8")
 
     return app
 

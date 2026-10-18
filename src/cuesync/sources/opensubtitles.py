@@ -313,6 +313,9 @@ def _candidates(body: dict[str, Any], reverse: dict[str, str]) -> list[Candidate
             if language is None:
                 continue
             hash_match = attributes.get("moviehash_match") is True
+            downloads = attributes.get("download_count")
+            if not isinstance(downloads, int) or isinstance(downloads, bool):
+                downloads = 0
             for file in attributes["files"]:
                 candidates.append(
                     Candidate(
@@ -321,6 +324,7 @@ def _candidates(body: dict[str, Any], reverse: dict[str, str]) -> list[Candidate
                         language=language,
                         release_name=attributes.get("release") or file.get("file_name") or "",
                         hash_match=hash_match,
+                        downloads=downloads,
                     )
                 )
         except (KeyError, TypeError, AttributeError):
