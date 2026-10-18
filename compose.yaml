@@ -1,0 +1,31 @@
+# CueSync with a Tailscale Funnel sidecar. See docs/running.md.
+services:
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: cuesync
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./deploy/tailscale:/config:ro
+    restart: unless-stopped
+
+  cuesync:
+    build: .
+    # Share the network with Tailscale so Funnel reaches CueSync on 127.0.0.1:7000.
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      CUESYNC_PUBLIC_URL: ${CUESYNC_PUBLIC_URL}
+      CUESYNC_CACHE_MAX_MB: ${CUESYNC_CACHE_MAX_MB:-500}
+    volumes:
+      - cuesync-data:/data
+    restart: unless-stopped
+
+volumes:
+  tailscale-state:
+  cuesync-data:
