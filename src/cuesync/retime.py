@@ -1,8 +1,9 @@
 """Re-time the best subtitle of each language to the audio of the played file.
 
 The stages run in order: stream lookup, debrid link, audio windows and sync. Every stage is
-injectable so tests can fake it. Any failure gives an empty result, so the caller falls back
-to the original subtitles. The debrid link is a secret and is never logged.
+injectable so tests can fake it. A subtitle that could not be aligned is missing from the
+result, so the caller falls back to the original. The debrid link is a secret and is never
+logged.
 """
 
 from __future__ import annotations
@@ -25,10 +26,8 @@ from cuesync.sources.base import Candidate, SubtitleSource
 from cuesync.stream import StreamRef, find_stream
 from cuesync.stremio import Extra, VideoId
 from cuesync.subtitles import Cue
-from cuesync.sync import Correction, Verdict, align, audio_speech
+from cuesync.sync import Correction, align, audio_speech
 
-# Stremio gives up on slow subtitle responses. This comes on top of the search budget.
-RETIME_BUDGET = 15.0
 # Each re-timed subtitle costs a download from the user's daily source quota.
 RETIME_PER_LANGUAGE = 1
 
@@ -46,12 +45,6 @@ class Stages:
     probe: Callable[[str], Awaitable[MediaInfo]] = audio.probe
     extract_windows: Callable[..., Awaitable[list[AudioWindow]]] = audio.extract_windows
     align: Callable[[Sequence[tuple[float, np.ndarray]], Sequence[Cue]], Correction] = align
-
-
-@dataclass(frozen=True)
-class Retimed:
-    candidate: Candidate
-    correction: Correction
 
 
 async def _prepare_audio(stages: Stages, url: str) -> list[tuple[float, np.ndarray]] | None:
@@ -88,7 +81,7 @@ async def _download_all(
     return [(candidate, cues) for candidate, cues in stored.items() if cues is not None]
 
 
-def _pick(ranked: Sequence[Candidate]) -> list[Candidate]:
+def pick(ranked: Sequence[Candidate]) -> list[Candidate]:
     """The first `RETIME_PER_LANGUAGE` candidates of each language, in ranked order."""
     counts: dict[str, int] = {}
     picked = []
@@ -130,15 +123,18 @@ async def retime(
     ranked: Sequence[Candidate],
     *,
     cache: Cache,
-) -> list[Retimed]:
-    """Re-time the top subtitle of each language. Only subtitles that need it are returned.
+) -> dict[Candidate, Correction]:
+    """Re-time the top subtitle of each language and return the correction found for each.
+
+    A correction is returned whatever its verdict. The caller decides which to use. A subtitle
+    that could not be downloaded or aligned has no entry.
 
     Results already in the cache are reused. Only the subtitles without one are aligned, and
     the stream lookup and audio read are skipped when the cache has the file's speech timeline.
     """
     if not ranked or (extra.filename is None and extra.video_size is None):
-        return []
-    picked = _pick(ranked)
+        return {}
+    picked = pick(ranked)
     video_hash = extra.video_hash
     known: dict[Candidate, Correction] = {}
     if video_hash:
@@ -175,8 +171,4 @@ async def retime(
                 if video_hash:
                     cache.put_sync(video_hash, encode_key(candidate), correction)
 
-    return [
-        Retimed(candidate, known[candidate])
-        for candidate in picked
-        if candidate in known and known[candidate].verdict is Verdict.SYNCED
-    ]
+    return known

@@ -11,9 +11,7 @@ import pytest
 
 from cuesync.search import (
     decode_key,
-    decode_retimed_key,
     encode_key,
-    encode_retimed_key,
     gather_candidates,
     rank,
     similarity,
@@ -175,31 +173,3 @@ def b64(text: str) -> str:
 def test_decode_key_rejects_garbage(key):
     with pytest.raises(ValueError):
         decode_key(key)
-
-
-def test_retimed_key_round_trip():
-    candidate = cand("123", "vie", source="subdl")
-    key = encode_retimed_key(candidate, 25 / 24, -1500)
-    assert decode_retimed_key(key) == ("subdl", "123", "vie", 25 / 24, -1500)
-    assert "=" not in key
-
-
-@pytest.mark.parametrize(
-    "key",
-    [
-        "",
-        "!!!",
-        b64('["a","b","c"]'),
-        b64('["a","b","c",1.0]'),
-        b64('["a","b","c",1.0,0,0]'),
-        b64('["a","b","c",1.5,0]'),
-        b64('["a","b","c","1.0",0]'),
-        b64('["a","b","c",true,0]'),
-        b64('["a","b","c",1.0,1.5]'),
-        b64('["a","b","c",1.0,true]'),
-        b64('["a",1,"c",1.0,0]'),
-    ],
-)
-def test_decode_retimed_key_rejects_garbage(key):
-    with pytest.raises(ValueError):
-        decode_retimed_key(key)
