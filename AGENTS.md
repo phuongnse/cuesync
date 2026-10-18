@@ -38,6 +38,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/config.py`: user settings, their URL encoding and log redaction.
 - `src/cuesync/subtitles/`: subtitle model, decoding, SRT/VTT/ASS parsing, SRT writing and zip picking.
 - `src/cuesync/search.py`: concurrent source search, ranking and subtitle keys.
+- `src/cuesync/audio.py`: probes a remote file, picks the audio track, and extracts mono 16 kHz audio windows with ffmpeg.
 - `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles, SubDL).
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
