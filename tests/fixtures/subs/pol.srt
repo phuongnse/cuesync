@@ -1,0 +1,40 @@
+1
+00:00:01,000 --> 00:00:04,000
+Dokąd idziesz tak wcześnie rano?
+
+2
+00:00:05,000 --> 00:00:08,000
+Zażółć gęślą jaźń, powiedział stary profesor.
+
+3
+00:00:09,000 --> 00:00:12,000
+Wszyscy zapomnieli o jego urodzinach w zeszłym tygodniu.
+
+4
+00:00:13,000 --> 00:00:16,000
+Ona szepnęła: „Nikomu nie mów, co widziałeś.”
+
+5
+00:00:17,000 --> 00:00:20,000
+Łódź płynęła powoli przez mgłę nad jeziorem.
+
+6
+00:00:21,000 --> 00:00:24,000
+Musimy wrócić do domu przed burzą.
+
+7
+00:00:25,000 --> 00:00:28,000
+Żaden z nich nie wierzył w tę opowieść.
+
+8
+00:00:29,000 --> 00:00:32,000
+Źle się czuję, więc zostanę w łóżku.
+
+9
+00:00:33,000 --> 00:00:36,000
+Dziękuję za pomoc, do zobaczenia w przyszłą środę.
+
+10
+00:00:37,000 --> 00:00:40,000
+Ćwiczyliśmy całą noc, a teraz jesteśmy zmęczeni.
+
