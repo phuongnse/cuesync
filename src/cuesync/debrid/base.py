@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Protocol
 
 import httpx
 
 from cuesync.config import UserConfig
 from cuesync.debrid.realdebrid import RealDebrid
+from cuesync.debrid.torbox import TorBox
 from cuesync.stream import StreamRef
-
-log = logging.getLogger(__name__)
 
 
 class DebridProvider(Protocol):
@@ -26,6 +24,6 @@ def debrid_provider(config: UserConfig, client: httpx.AsyncClient) -> DebridProv
     """The provider the user configured, or None when there is none or it is not supported."""
     if config.debrid_provider == "realdebrid" and config.debrid_api_key:
         return RealDebrid(config.debrid_api_key, client)
-    if config.debrid_provider == "torbox":
-        log.debug("TorBox is not supported yet")
+    if config.debrid_provider == "torbox" and config.debrid_api_key:
+        return TorBox(config.debrid_api_key, client)
     return None
