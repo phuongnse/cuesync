@@ -43,6 +43,7 @@ class UserConfig(BaseModel):
     subdl_api_key: str | None = Field(default=None, repr=False)
     debrid_provider: Literal["realdebrid", "torbox"] | None = None
     debrid_api_key: str | None = Field(default=None, repr=False)
+    max_per_language: int = Field(default=5, ge=1, le=20)
 
     @field_validator(*OPTIONAL_FIELDS, mode="before")
     @classmethod

@@ -30,6 +30,7 @@ class Candidate:
     language: str  # 3-letter, the user's code
     release_name: str
     hash_match: bool = False
+    downloads: int = 0  # how often the source says the file was downloaded, 0 when unknown
 
 
 class SourceError(Exception):

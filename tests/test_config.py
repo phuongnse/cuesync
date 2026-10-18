@@ -20,6 +20,7 @@ FULL = UserConfig(
     subdl_api_key="subdl-key-789",
     debrid_provider="realdebrid",
     debrid_api_key="rd-key-abc",
+    max_per_language=8,
 )
 
 
@@ -34,6 +35,15 @@ def test_round_trip_all_fields():
 def test_round_trip_languages_only():
     config = UserConfig(languages=["eng"])
     assert decode_config(encode_config(config)) == config
+
+
+def test_max_per_language_defaults_to_five_and_stays_in_range():
+    assert UserConfig(languages=["eng"]).max_per_language == 5
+    assert UserConfig(languages=["eng"], max_per_language=1).max_per_language == 1
+    assert UserConfig(languages=["eng"], max_per_language=20).max_per_language == 20
+    for bad in (0, 21, -1):
+        with pytest.raises(ValueError):
+            UserConfig(languages=["eng"], max_per_language=bad)
 
 
 def test_token_is_url_safe_and_unpadded():

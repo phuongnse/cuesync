@@ -131,6 +131,7 @@ def test_movie_search_params_and_candidates():
     ]
     assert found[1].release_name == "Inception.2010.1080p.BluRay.x264"
     assert {c.source for c in found} == {"opensubtitles"}
+    assert [c.downloads for c in found] == [300, 1200]
 
 
 def test_search_without_hash_or_with_a_bad_hash_leaves_moviehash_out():
