@@ -17,16 +17,28 @@ not translate or generate subtitles.
 
 Python 3.12+ and ffmpeg.
 
+On Linux and macOS (the scripts are what CI and NexKit run):
+
 ```sh
-python -m venv .venv
-.venv/bin/pip install -e ".[dev]"   # Windows: .venv\Scripts\pip
-.venv/bin/pytest -q
-.venv/bin/ruff check . && .venv/bin/ruff format --check .
+scripts/setup.sh
+scripts/lint.sh
+scripts/test.sh
 .venv/bin/cuesync                   # http://127.0.0.1:7000/manifest.json
 ```
 
-Development is driven by GitHub issues processed with [NexKit](https://github.com/phuongnse/nexkit).
-See [AGENTS.md](AGENTS.md) for the architecture and conventions.
+On Windows:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\ruff check . ; .venv\Scripts\ruff format --check .
+.venv\Scripts\pytest -q
+.venv\Scripts\cuesync
+```
+
+Development is driven by GitHub issues processed with [NexKit](https://github.com/phuongnse/nexkit);
+see [docs/delivery.md](docs/delivery.md). [AGENTS.md](AGENTS.md) has the architecture and
+conventions.
 
 ## License
 

@@ -42,13 +42,14 @@ Add new modules under `src/cuesync/` by concern (for example `sources/`, `stream
 ## Commands
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest -q
-.venv/bin/ruff check . && .venv/bin/ruff format --check .
+scripts/setup.sh             # ffmpeg (when missing) and the project into .venv
+scripts/lint.sh              # ruff check and format check
+scripts/test.sh              # pytest
 .venv/bin/cuesync            # serves on 127.0.0.1:7000
 ```
 
-ffmpeg and ffprobe are installed on CI and in NexKit runs.
+CI and NexKit run exactly these scripts, so ffmpeg and ffprobe are always available in
+tests there.
 
 ## Conventions
 
@@ -62,9 +63,13 @@ ffmpeg and ffprobe are installed on CI and in NexKit runs.
 - Keep the addon responsive: Stremio gives up on slow subtitle responses, so long work
   runs in the background and the response returns what is ready.
 - Add a dependency only when it earns its place, with a lower bound in `pyproject.toml`.
-- `.github/` and `.nexkit/` are maintained by people; do not change them.
+- `.github/` and `.nexkit/` are maintained by people; do not change them. A new system
+  package goes in `scripts/setup.sh`, which CI and NexKit both run.
+- A change that makes any doc statement false (README, AGENTS.md, `docs/`) fixes it in
+  the same change. Docs state rules and reasons, not incident history or issue numbers.
 
 ## Roadmap
 
 Work is tracked as GitHub issues grouped in milestones, processed with NexKit
-(`/nexkit plan`, then `/nexkit go`). Each issue lists the issues it depends on.
+(`/nexkit plan`, then `/nexkit go`). Each issue lists the issues it depends on. The
+workflow is in [docs/delivery.md](docs/delivery.md).

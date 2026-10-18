@@ -1,18 +1,102 @@
 {
   "version": 1,
   "agents": {
-    "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
+    "claude": {
+      "runtime": "claude-code",
+      "provider": "anthropic",
+      "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"
+    }
   },
-  "agent": "claude",
-  "model": "sonnet",
+  "model": "claude-opus-5-5",
+  "effort": "high",
   "setup": [
-    "sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg",
-    "python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev]'"
+    "scripts/setup.sh"
   ],
   "checks": [
-    {"name": "test", "run": ".venv/bin/pytest -q"},
-    {"name": "lint", "run": ".venv/bin/ruff check . && .venv/bin/ruff format --check ."}
+    {
+      "name": "lint",
+      "run": "scripts/lint.sh",
+      "timeout_minutes": 10
+    },
+    {
+      "name": "test",
+      "run": "scripts/test.sh",
+      "timeout_minutes": 15
+    }
   ],
-  "fix": {"max_auto_rounds": 2},
-  "merge": {"auto": false}
+  "cache": [
+    {
+      "name": "pip",
+      "paths": [
+        "~/.cache/pip"
+      ],
+      "key_files": [
+        "pyproject.toml"
+      ]
+    }
+  ],
+  "stages": {
+    "plan": {
+      "timeout_minutes": 20
+    },
+    "implement": {
+      "timeout_minutes": 45
+    },
+    "review": {
+      "timeout_minutes": 25
+    },
+    "triage": {
+      "model": "claude-opus-5-5"
+    }
+  },
+  "default_profile": "standard",
+  "profiles": {
+    "standard": {
+      "when": "Anything that is not hard: a clear request that follows a pattern the code already has, such as another subtitle source, subtitle parsing, docs or tests.",
+      "stages": {
+        "plan": {
+          "model": "claude-opus-5-5"
+        },
+        "implement": {
+          "model": "claude-haiku-5-5"
+        },
+        "review": {
+          "agent": "claude",
+          "model": "claude-opus-5-5"
+        }
+      }
+    },
+    "hard": {
+      "when": "A mistake could leak the user's secrets or install URL, let a request reach files or hosts it should not, download, seed or store more than intended on the user's machine, leave processes or jobs running without limits, serve wrong or corrupted cached subtitles, or silently mis-time subtitles. For example the addon configuration and its encoding in the URL, debrid and torrent access, ffmpeg processes, the cache, background jobs and the alignment math that decides a correction. When unsure between standard and hard, choose hard.",
+      "stages": {
+        "plan": {
+          "model": "claude-opus-5-5"
+        },
+        "implement": {
+          "model": "claude-sonnet-5-5",
+          "timeout_minutes": 60
+        },
+        "review": {
+          "agent": "claude",
+          "model": "claude-opus-5-5"
+        }
+      }
+    }
+  },
+  "fix": {
+    "max_auto_rounds": 2
+  },
+  "merge": {
+    "auto": true,
+    "after_workflows": [
+      "ci.yml"
+    ]
+  },
+  "conflicts": {
+    "auto_resolve": true
+  },
+  "close_parent_issues": true,
+  "notify": [
+    "phuongnse"
+  ]
 }
