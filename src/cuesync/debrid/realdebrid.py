@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from pathlib import PurePosixPath
 from typing import Any
 
 import httpx
 
 from cuesync import __version__
+from cuesync.debrid.files import TorrentFile, find_file, is_video
 from cuesync.stream import StreamRef
 
 API_URL = "https://api.real-debrid.com/rest/1.0"
@@ -19,9 +19,6 @@ MAX_WAIT = 10.0  # seconds to wait for a torrent to be downloaded, adding and se
 POLL_INTERVAL = 1.0  # seconds
 LINK_TTL = 60 * 60  # seconds
 LIST_LIMIT = 100
-VIDEO_EXTENSIONS = frozenset(
-    {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts", ".webm", ".mpg", ".mpeg"}
-)
 # Torrent states after which waiting is pointless.
 FAILED_STATUSES = frozenset({"error", "virus", "dead", "magnet_error"})
 
@@ -151,7 +148,7 @@ class RealDebrid:
         if target is None:
             raise _DebridError("the file is not in the torrent")
         if info["status"] == "waiting_files_selection":
-            ids = {file["id"] for file in _files(info) if _is_video(file)} | {target["id"]}
+            ids = {file["id"] for file in _files(info) if is_video(file["path"])} | {target["id"]}
             await self._send(
                 "select files",
                 "POST",
@@ -256,48 +253,21 @@ def _files(info: dict[str, Any]) -> list[dict[str, Any]]:
     return files
 
 
-def _basename(path: str) -> str:
-    return PurePosixPath(path.replace("\\", "/")).name.casefold()
-
-
-def _is_video(file: dict[str, Any]) -> bool:
-    return PurePosixPath(file["path"].replace("\\", "/")).suffix.lower() in VIDEO_EXTENSIONS
-
-
 def _pick_file(
     files: list[dict[str, Any]], stream: StreamRef, *, warn: bool = True
 ) -> dict[str, Any] | None:
     """The file of the torrent that is the played one: by name, then index, then size."""
-    target = _find_file(files, stream)
-    if target is None and warn:
-        log.warning("Real-Debrid torrent %s has no file that matches the stream", stream.info_hash)
-    return target
-
-
-def _find_file(files: list[dict[str, Any]], stream: StreamRef) -> dict[str, Any] | None:
-    size = stream.size
-    if stream.filename:
-        wanted = _basename(stream.filename)
-        named = [
-            file
-            for file in files
-            if _basename(file["path"]) == wanted and (size is None or file["bytes"] == size)
-        ]
-        if len(named) == 1:
-            return named[0]
-    if stream.file_idx is not None:
-        for file in files:
-            if file["id"] == stream.file_idx + 1:
-                if size is not None and file["bytes"] != size:
-                    break
-                return file
-    if size is not None:
-        sized = [file for file in files if file["bytes"] == size]
-        if len(sized) == 1:
-            return sized[0]
-    if stream.file_idx is None and files:
-        return max(files, key=lambda file: file["bytes"])
-    return None
+    # Real-Debrid numbers files from 1, the shared rule from 0 like Torrentio.
+    match = find_file(
+        [TorrentFile(index=f["id"] - 1, path=f["path"], size=f["bytes"]) for f in files], stream
+    )
+    if match is None:
+        if warn:
+            log.warning(
+                "Real-Debrid torrent %s has no file that matches the stream", stream.info_hash
+            )
+        return None
+    return next(f for f in files if f["id"] == match.index + 1)
 
 
 def _link_for(info: dict[str, Any], target_id: int) -> str:

@@ -16,7 +16,7 @@ import pytest
 
 from cuesync import __version__
 from cuesync.config import UserConfig
-from cuesync.debrid import DebridProvider, RealDebrid, debrid_provider
+from cuesync.debrid import DebridProvider, RealDebrid, TorBox, debrid_provider
 from cuesync.debrid import realdebrid as realdebrid_module
 from cuesync.stream import StreamRef
 
@@ -389,12 +389,18 @@ def test_factory():
                 UserConfig(languages=["eng"], debrid_provider="torbox", debrid_api_key="k"),
                 client,
             )
+            # The config validation rejects a provider without a key, so skip it.
+            torbox_without_key = debrid_provider(
+                UserConfig.model_construct(languages=["eng"], debrid_provider="torbox"), client
+            )
             none = debrid_provider(UserConfig(languages=["eng"]), client)
-            return real, torbox, none
+            return real, torbox, torbox_without_key, none
 
-    real, torbox, none = asyncio.run(main())
+    real, torbox, torbox_without_key, none = asyncio.run(main())
     assert isinstance(real, RealDebrid)
     provider: DebridProvider = real
     assert provider.name == "realdebrid"
-    assert torbox is None
+    assert isinstance(torbox, TorBox)
+    assert torbox.name == "torbox"
+    assert torbox_without_key is None
     assert none is None
