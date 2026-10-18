@@ -33,6 +33,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 ## Layout
 
 - `src/cuesync/app.py`: FastAPI app implementing the Stremio addon protocol.
+- `src/cuesync/stremio.py`: parses the `extra` segment and the `id` of addon requests.
 - `src/cuesync/__main__.py`: `python -m cuesync` / `cuesync` entry point (uvicorn).
 - `tests/`: pytest tests.
 
