@@ -15,7 +15,7 @@ not translate or generate subtitles.
 
 ## Install
 
-1. Run the server and make it reachable over HTTPS (for example with Tailscale Funnel).
+1. Run the server and make it reachable over HTTPS; see [docs/running.md](docs/running.md).
 2. Open `https://<your-host>/configure`.
 3. Fill in the form: your subtitle languages, your subtitle source keys and your debrid
    service.

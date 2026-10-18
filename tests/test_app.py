@@ -141,3 +141,44 @@ def test_subtitles_reject_malformed_id(id):
 
 def test_subtitles_with_extra_reject_malformed_id():
     assert client.get(f"/{TOKEN}/subtitles/series/tt0903747:1/videoHash=x.json").status_code == 400
+
+
+PUBLIC_URL = "https://cuesync.example.ts.net"
+
+
+def test_configure_uses_public_url_argument():
+    response = TestClient(create_app(public_url=PUBLIC_URL + "/")).get("/configure")
+    assert f'data-base-url="{PUBLIC_URL}"' in response.text
+
+
+def test_configure_uses_public_url_from_environment(monkeypatch):
+    monkeypatch.setenv("CUESYNC_PUBLIC_URL", f" {PUBLIC_URL}/ ")
+    response = TestClient(create_app()).get(f"/{TOKEN}/configure")
+    assert f'data-base-url="{PUBLIC_URL}"' in response.text
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_configure_uses_request_url_without_public_url(monkeypatch, value):
+    monkeypatch.delenv("CUESYNC_PUBLIC_URL", raising=False)
+    for path in ("/configure", f"/{TOKEN}/configure"):
+        response = TestClient(create_app(public_url=value)).get(path)
+        assert 'data-base-url="http://testserver"' in response.text
+
+
+def test_empty_environment_value_counts_as_unset(monkeypatch):
+    monkeypatch.setenv("CUESYNC_PUBLIC_URL", "  ")
+    response = TestClient(create_app()).get("/configure")
+    assert 'data-base-url="http://testserver"' in response.text
+
+
+@pytest.mark.parametrize("value", ["cuesync.example.ts.net", "ftp://x"])
+def test_public_url_without_http_scheme_is_rejected(value):
+    with pytest.raises(ValueError, match="CUESYNC_PUBLIC_URL"):
+        create_app(public_url=value)
+
+
+def test_configure_page_has_no_placeholder_or_location_origin():
+    text = TestClient(create_app(public_url=PUBLIC_URL)).get("/configure").text
+    assert "{{BASE_URL}}" not in text
+    assert "location.origin" not in text
+    assert "location.host" not in text
