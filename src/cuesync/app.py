@@ -6,6 +6,7 @@ https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/protocol.md
 
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 import os
@@ -22,12 +23,24 @@ from fastapi.responses import HTMLResponse, Response
 
 from . import __version__
 from .config import InvalidConfig, RedactConfigFilter, UserConfig, decode_config
-from .search import build_sources, decode_key, encode_key, gather_candidates, rank
+from .retime import RETIME_BUDGET, Stages, retime
+from .search import (
+    build_sources,
+    decode_key,
+    decode_retimed_key,
+    encode_key,
+    encode_retimed_key,
+    gather_candidates,
+    rank,
+)
 from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
 from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
 from .subtitles import write_srt
+from .sync import Correction, Verdict, apply_correction
 
 SRT_CACHE_SIZE = 100
+
+log = logging.getLogger(__name__)
 
 MANIFEST = {
     "id": "community.cuesync",
@@ -105,20 +118,94 @@ async def find_subtitles(
         ),
     )
     ranked = rank(candidates, config.languages, extra.filename, config.max_per_language)
-    prefix = f"{base_url(request)}/{request.path_params['config']}/sub"
-    return {
-        "subtitles": [
-            {"id": key, "url": f"{prefix}/{key}.srt", "lang": candidate.language}
-            for candidate in ranked
-            for key in (encode_key(candidate),)
-        ]
-    }
+    cache: OrderedDict[str, bytes] = request.app.state.srt_cache
+    try:
+        retimed = await asyncio.wait_for(
+            retime(
+                request.app.state.stages,
+                sources,
+                request.app.state.http,
+                config,
+                video,
+                extra,
+                ranked,
+            ),
+            request.app.state.retime_budget,
+        )
+    except TimeoutError:
+        log.info("re-timing did not finish in time, returning the original subtitles")
+        retimed = []
+    except Exception as exc:
+        log.warning("re-timing failed: %s", type(exc).__name__)
+        retimed = []
+    base = f"{base_url(request)}/{request.path_params['config']}"
+    entries = []
+    numbers: dict[str, int] = {}
+    for item in retimed:
+        language = item.candidate.language
+        key = encode_retimed_key(item.candidate, item.correction.scale, item.correction.offset_ms)
+        _remember(cache, encode_key(item.candidate), item.original_srt)
+        _remember(cache, key, item.srt)
+        numbers[language] = numbers.get(language, 0) + 1
+        entries.append(
+            {
+                "id": f"cuesync-{language}-{numbers[language]}",
+                "url": f"{base}/retimed/{key}.srt",
+                "lang": language,
+            }
+        )
+    entries.extend(
+        {"id": key, "url": f"{base}/sub/{key}.srt", "lang": candidate.language}
+        for candidate in ranked
+        for key in (encode_key(candidate),)
+    )
+    return {"subtitles": entries}
+
+
+def _remember(cache: OrderedDict[str, bytes], key: str, body: bytes) -> None:
+    """Keep a subtitle in memory, dropping the least recently used ones past the size cap."""
+    cache[key] = body
+    cache.move_to_end(key)
+    while len(cache) > SRT_CACHE_SIZE:
+        cache.popitem(last=False)
+
+
+async def _serve_srt(
+    request: Request,
+    config: UserConfig,
+    key: str,
+    source_name: str,
+    source_id: str,
+    language: str,
+    correction: Correction | None = None,
+) -> Response:
+    """Serve a subtitle from memory, or download it from its source, re-time it and keep it."""
+    cache: OrderedDict[str, bytes] = request.app.state.srt_cache
+    body = cache.get(key)
+    if body is None:
+        sources = request.app.state.sources(config, request.app.state.http)
+        source = next((s for s in sources if s.name == source_name), None)
+        if source is None:
+            raise HTTPException(404, "Unknown subtitle")
+        candidate = Candidate(source_name, source_id, language, release_name="")
+        try:
+            subtitle = await source.download(candidate)
+        except SourceError as exc:
+            raise HTTPException(502, str(exc)) from None
+        cues = apply_correction(subtitle.cues, correction) if correction else subtitle.cues
+        body = write_srt(cues)
+        _remember(cache, key, body)
+    else:
+        cache.move_to_end(key)
+    return Response(body, media_type="application/x-subrip; charset=utf-8")
 
 
 def create_app(
     public_url: str | None = None,
     source_factory: Callable[[UserConfig, httpx.AsyncClient], Sequence[SubtitleSource]]
     | None = None,
+    stages: Stages | None = None,
+    retime_budget: float = RETIME_BUDGET,
 ) -> FastAPI:
     redact_access_log()
 
@@ -130,6 +217,8 @@ def create_app(
     app = FastAPI(title="CueSync", version=__version__, lifespan=lifespan)
     app.state.sources = source_factory or build_sources
     app.state.http = httpx.AsyncClient()
+    app.state.stages = stages or Stages()
+    app.state.retime_budget = retime_budget
     app.state.srt_cache = OrderedDict()  # subtitle key -> SRT bytes, least recently used first
     app.state.public_url = normalize_public_url(
         public_url if public_url is not None else os.environ.get("CUESYNC_PUBLIC_URL")
@@ -176,29 +265,20 @@ def create_app(
 
     @app.get("/{config}/sub/{key}.srt")
     async def subtitle_file(request: Request, key: str, config: ConfigDep) -> Response:
-        cache: OrderedDict[str, bytes] = request.app.state.srt_cache
-        body = cache.get(key)
-        if body is None:
-            try:
-                source_name, source_id, language = decode_key(key)
-            except ValueError:
-                raise HTTPException(404, "Unknown subtitle") from None
-            sources = request.app.state.sources(config, request.app.state.http)
-            source = next((s for s in sources if s.name == source_name), None)
-            if source is None:
-                raise HTTPException(404, "Unknown subtitle")
-            candidate = Candidate(source_name, source_id, language, release_name="")
-            try:
-                subtitle = await source.download(candidate)
-            except SourceError as exc:
-                raise HTTPException(502, str(exc)) from None
-            body = write_srt(subtitle.cues)
-            cache[key] = body
-            while len(cache) > SRT_CACHE_SIZE:
-                cache.popitem(last=False)
-        else:
-            cache.move_to_end(key)
-        return Response(body, media_type="application/x-subrip; charset=utf-8")
+        try:
+            source_name, source_id, language = decode_key(key)
+        except ValueError:
+            raise HTTPException(404, "Unknown subtitle") from None
+        return await _serve_srt(request, config, key, source_name, source_id, language)
+
+    @app.get("/{config}/retimed/{key}.srt")
+    async def retimed_file(request: Request, key: str, config: ConfigDep) -> Response:
+        try:
+            source_name, source_id, language, scale, offset_ms = decode_retimed_key(key)
+        except ValueError:
+            raise HTTPException(404, "Unknown subtitle") from None
+        correction = Correction(Verdict.SYNCED, scale, offset_ms, 0, 0.0)
+        return await _serve_srt(request, config, key, source_name, source_id, language, correction)
 
     return app
 
