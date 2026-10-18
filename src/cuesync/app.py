@@ -10,10 +10,10 @@ import asyncio
 import html
 import logging
 import os
-from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from importlib.resources import files
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
 from . import __version__
+from .cache import DEFAULT_MAX_BYTES, Cache
 from .config import InvalidConfig, RedactConfigFilter, UserConfig, decode_config
 from .retime import RETIME_BUDGET, Stages, retime
 from .search import (
@@ -37,8 +38,6 @@ from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSourc
 from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
 from .subtitles import write_srt
 from .sync import Correction, Verdict, apply_correction
-
-SRT_CACHE_SIZE = 100
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +83,19 @@ def normalize_public_url(value: str | None) -> str | None:
     return value.rstrip("/")
 
 
+def cache_max_bytes(value: str | None) -> int:
+    """The size limit of stored files in bytes, from `CUESYNC_CACHE_MAX_MB`."""
+    if value is None or not value.strip():
+        return DEFAULT_MAX_BYTES
+    try:
+        megabytes = int(value)
+    except ValueError:
+        megabytes = 0
+    if megabytes <= 0:
+        raise ValueError(f"CUESYNC_CACHE_MAX_MB must be a positive whole number, got {value!r}")
+    return megabytes * 1024 * 1024
+
+
 def base_url(request: Request) -> str:
     """The address clients use to reach this server. Every absolute URL is built from it."""
     return request.app.state.public_url or str(request.base_url).rstrip("/")
@@ -105,6 +117,7 @@ async def find_subtitles(
 ) -> dict:
     """Search the user's sources and list the best subtitles, each linked to its `.srt`."""
     sources = request.app.state.sources(config, request.app.state.http)
+    cache: Cache = request.app.state.cache
     candidates = await gather_candidates(
         sources,
         SubtitleRequest(
@@ -116,9 +129,9 @@ async def find_subtitles(
             video_size=extra.video_size,
             filename=extra.filename,
         ),
+        cache=cache,
     )
     ranked = rank(candidates, config.languages, extra.filename, config.max_per_language)
-    cache: OrderedDict[str, bytes] = request.app.state.srt_cache
     try:
         retimed = await asyncio.wait_for(
             retime(
@@ -129,6 +142,7 @@ async def find_subtitles(
                 video,
                 extra,
                 ranked,
+                cache=cache,
             ),
             request.app.state.retime_budget,
         )
@@ -144,8 +158,6 @@ async def find_subtitles(
     for item in retimed:
         language = item.candidate.language
         key = encode_retimed_key(item.candidate, item.correction.scale, item.correction.offset_ms)
-        _remember(cache, encode_key(item.candidate), item.original_srt)
-        _remember(cache, key, item.srt)
         numbers[language] = numbers.get(language, 0) + 1
         entries.append(
             {
@@ -162,42 +174,35 @@ async def find_subtitles(
     return {"subtitles": entries}
 
 
-def _remember(cache: OrderedDict[str, bytes], key: str, body: bytes) -> None:
-    """Keep a subtitle in memory, dropping the least recently used ones past the size cap."""
-    cache[key] = body
-    cache.move_to_end(key)
-    while len(cache) > SRT_CACHE_SIZE:
-        cache.popitem(last=False)
-
-
 async def _serve_srt(
     request: Request,
     config: UserConfig,
-    key: str,
     source_name: str,
     source_id: str,
     language: str,
     correction: Correction | None = None,
 ) -> Response:
-    """Serve a subtitle from memory, or download it from its source, re-time it and keep it."""
-    cache: OrderedDict[str, bytes] = request.app.state.srt_cache
-    body = cache.get(key)
-    if body is None:
+    """Serve a subtitle from the cache, or download it from its source and keep it.
+
+    The cache holds the original. The correction, when there is one, is applied on each serve.
+    """
+    cache: Cache = request.app.state.cache
+    candidate = Candidate(source_name, source_id, language, release_name="")
+    cues = cache.get_subtitle(encode_key(candidate))
+    if cues is None:
         sources = request.app.state.sources(config, request.app.state.http)
         source = next((s for s in sources if s.name == source_name), None)
         if source is None:
             raise HTTPException(404, "Unknown subtitle")
-        candidate = Candidate(source_name, source_id, language, release_name="")
         try:
             subtitle = await source.download(candidate)
         except SourceError as exc:
             raise HTTPException(502, str(exc)) from None
-        cues = apply_correction(subtitle.cues, correction) if correction else subtitle.cues
-        body = write_srt(cues)
-        _remember(cache, key, body)
-    else:
-        cache.move_to_end(key)
-    return Response(body, media_type="application/x-subrip; charset=utf-8")
+        cues = subtitle.cues
+        cache.put_subtitle(encode_key(candidate), cues)
+    if correction:
+        cues = apply_correction(cues, correction)
+    return Response(write_srt(cues), media_type="application/x-subrip; charset=utf-8")
 
 
 def create_app(
@@ -206,6 +211,7 @@ def create_app(
     | None = None,
     stages: Stages | None = None,
     retime_budget: float = RETIME_BUDGET,
+    cache: Cache | None = None,
 ) -> FastAPI:
     redact_access_log()
 
@@ -213,13 +219,19 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
         await app.state.http.aclose()
+        app.state.cache.close()
 
     app = FastAPI(title="CueSync", version=__version__, lifespan=lifespan)
     app.state.sources = source_factory or build_sources
     app.state.http = httpx.AsyncClient()
     app.state.stages = stages or Stages()
     app.state.retime_budget = retime_budget
-    app.state.srt_cache = OrderedDict()  # subtitle key -> SRT bytes, least recently used first
+    if cache is None:
+        cache = Cache(
+            Path(os.environ.get("CUESYNC_DATA_DIR") or "data"),
+            max_bytes=cache_max_bytes(os.environ.get("CUESYNC_CACHE_MAX_MB")),
+        )
+    app.state.cache = cache
     app.state.public_url = normalize_public_url(
         public_url if public_url is not None else os.environ.get("CUESYNC_PUBLIC_URL")
     )
@@ -269,7 +281,7 @@ def create_app(
             source_name, source_id, language = decode_key(key)
         except ValueError:
             raise HTTPException(404, "Unknown subtitle") from None
-        return await _serve_srt(request, config, key, source_name, source_id, language)
+        return await _serve_srt(request, config, source_name, source_id, language)
 
     @app.get("/{config}/retimed/{key}.srt")
     async def retimed_file(request: Request, key: str, config: ConfigDep) -> Response:
@@ -278,7 +290,7 @@ def create_app(
         except ValueError:
             raise HTTPException(404, "Unknown subtitle") from None
         correction = Correction(Verdict.SYNCED, scale, offset_ms, 0, 0.0)
-        return await _serve_srt(request, config, key, source_name, source_id, language, correction)
+        return await _serve_srt(request, config, source_name, source_id, language, correction)
 
     return app
 

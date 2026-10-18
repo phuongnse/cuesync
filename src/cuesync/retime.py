@@ -17,13 +17,15 @@ import numpy as np
 
 from cuesync import audio
 from cuesync.audio import AudioError, AudioWindow, MediaInfo, select_audio_track
+from cuesync.cache import Cache
 from cuesync.config import UserConfig
 from cuesync.debrid import DebridProvider, debrid_provider
+from cuesync.search import encode_key
 from cuesync.sources.base import Candidate, SubtitleSource
 from cuesync.stream import StreamRef, find_stream
 from cuesync.stremio import Extra, VideoId
-from cuesync.subtitles import Cue, Subtitle, write_srt
-from cuesync.sync import Correction, Verdict, align, apply_correction, audio_speech
+from cuesync.subtitles import Cue
+from cuesync.sync import Correction, Verdict, align, audio_speech
 
 # Stremio gives up on slow subtitle responses. This comes on top of the search budget.
 RETIME_BUDGET = 15.0
@@ -50,8 +52,6 @@ class Stages:
 class Retimed:
     candidate: Candidate
     correction: Correction
-    original_srt: bytes
-    srt: bytes
 
 
 async def _prepare_audio(stages: Stages, url: str) -> list[tuple[float, np.ndarray]] | None:
@@ -67,23 +67,25 @@ async def _prepare_audio(stages: Stages, url: str) -> list[tuple[float, np.ndarr
 
 
 async def _download_all(
-    sources: Sequence[SubtitleSource], picked: Sequence[Candidate]
-) -> list[tuple[Candidate, Subtitle]]:
+    cache: Cache, sources: Sequence[SubtitleSource], wanted: Sequence[Candidate]
+) -> list[tuple[Candidate, tuple[Cue, ...]]]:
+    """The cues of each wanted candidate, from the cache or else from its source."""
     by_name = {source.name: source for source in sources}
-    known = [candidate for candidate in picked if candidate.source in by_name]
+    stored = {candidate: cache.get_subtitle(encode_key(candidate)) for candidate in wanted}
+    missing = [c for c in wanted if stored[c] is None and c.source in by_name]
     results = await asyncio.gather(
-        *(by_name[candidate.source].download(candidate) for candidate in known),
+        *(by_name[candidate.source].download(candidate) for candidate in missing),
         return_exceptions=True,
     )
-    downloaded: list[tuple[Candidate, Subtitle]] = []
-    for candidate, result in zip(known, results, strict=True):
+    for candidate, result in zip(missing, results, strict=True):
         if isinstance(result, asyncio.CancelledError):
             raise result
         if isinstance(result, BaseException):
             log.warning("%s download failed: %s", candidate.source, type(result).__name__)
         else:
-            downloaded.append((candidate, result))
-    return downloaded
+            cache.put_subtitle(encode_key(candidate), result.cues)
+            stored[candidate] = result.cues
+    return [(candidate, cues) for candidate, cues in stored.items() if cues is not None]
 
 
 def _pick(ranked: Sequence[Candidate]) -> list[Candidate]:
@@ -97,6 +99,27 @@ def _pick(ranked: Sequence[Candidate]) -> list[Candidate]:
     return picked
 
 
+async def _direct_url(
+    stages: Stages,
+    client: httpx.AsyncClient,
+    config: UserConfig,
+    video: VideoId,
+    extra: Extra,
+) -> str | None:
+    """The debrid link to the played file, or None when any stage along the way gives none."""
+    provider = stages.debrid(config, client)
+    if provider is None:
+        return None
+    stream = await stages.find_stream(client, video, extra.filename, extra.video_size)
+    if stream is None:
+        return None
+    return await provider.direct_url(stream)
+
+
+async def _no_audio() -> None:
+    return None
+
+
 async def retime(
     stages: Stages,
     sources: Sequence[SubtitleSource],
@@ -105,37 +128,55 @@ async def retime(
     video: VideoId,
     extra: Extra,
     ranked: Sequence[Candidate],
+    *,
+    cache: Cache,
 ) -> list[Retimed]:
-    """Re-time the top subtitle of each language. Only subtitles that need it are returned."""
+    """Re-time the top subtitle of each language. Only subtitles that need it are returned.
+
+    Results already in the cache are reused. Only the subtitles without one are aligned, and
+    the stream lookup and audio read are skipped when the cache has the file's speech timeline.
+    """
     if not ranked or (extra.filename is None and extra.video_size is None):
         return []
-    provider = stages.debrid(config, client)
-    if provider is None:
-        return []
-    stream = await stages.find_stream(client, video, extra.filename, extra.video_size)
-    if stream is None:
-        return []
-    url = await provider.direct_url(stream)
-    if url is None:
-        return []
+    picked = _pick(ranked)
+    video_hash = extra.video_hash
+    known: dict[Candidate, Correction] = {}
+    if video_hash:
+        for candidate in picked:
+            stored = cache.get_sync(video_hash, encode_key(candidate))
+            if stored is not None:
+                known[candidate] = stored
+    todo = [candidate for candidate in picked if candidate not in known]
 
-    downloaded, timelines = await asyncio.gather(
-        _download_all(sources, _pick(ranked)), _prepare_audio(stages, url)
-    )
-    if timelines is None:
-        return []
+    timelines = None
+    url = None
+    cacheable = bool(video_hash) and extra.video_size is not None
+    if todo:
+        if cacheable:
+            timelines = cache.get_timeline(video_hash, extra.video_size)
+        if timelines is None:
+            url = await _direct_url(stages, client, config, video, extra)
+            if url is None:
+                todo = []
 
-    retimed = []
-    for candidate, subtitle in downloaded:
-        correction = await asyncio.to_thread(stages.align, timelines, subtitle.cues)
-        if correction.verdict is not Verdict.SYNCED:
-            continue
-        retimed.append(
-            Retimed(
-                candidate,
-                correction,
-                write_srt(subtitle.cues),
-                write_srt(apply_correction(subtitle.cues, correction)),
-            )
+    if todo:
+        audio_task = (
+            _prepare_audio(stages, url) if timelines is None and url is not None else _no_audio()
         )
-    return retimed
+        downloaded, fresh = await asyncio.gather(_download_all(cache, sources, todo), audio_task)
+        if fresh is not None:
+            timelines = fresh
+            if cacheable:
+                cache.put_timeline(video_hash, extra.video_size, fresh)
+        if timelines is not None:
+            for candidate, cues in downloaded:
+                correction = await asyncio.to_thread(stages.align, timelines, cues)
+                known[candidate] = correction
+                if video_hash:
+                    cache.put_sync(video_hash, encode_key(candidate), correction)
+
+    return [
+        Retimed(candidate, known[candidate])
+        for candidate in picked
+        if candidate in known and known[candidate].verdict is Verdict.SYNCED
+    ]

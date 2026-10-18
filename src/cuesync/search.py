@@ -14,6 +14,7 @@ from collections.abc import Sequence
 
 import httpx
 
+from cuesync.cache import Cache
 from cuesync.config import UserConfig
 from cuesync.sources.base import Candidate, SubtitleRequest, SubtitleSource
 from cuesync.sources.opensubtitles import OpenSubtitlesSource
@@ -38,28 +39,51 @@ def build_sources(config: UserConfig, client: httpx.AsyncClient) -> list[Subtitl
 
 
 async def gather_candidates(
-    sources: Sequence[SubtitleSource], request: SubtitleRequest, budget: float = SEARCH_BUDGET
+    sources: Sequence[SubtitleSource],
+    request: SubtitleRequest,
+    budget: float = SEARCH_BUDGET,
+    cache: Cache | None = None,
 ) -> list[Candidate]:
-    """Search all sources at once. Sources that fail or miss the budget add nothing."""
+    """Search all sources at once. Sources that fail or miss the budget add nothing.
+
+    A source whose answer is in the cache is not asked again.
+    """
     if not sources:
         return []
-    tasks = [asyncio.ensure_future(source.search(request)) for source in sources]
-    _, pending = await asyncio.wait(tasks, timeout=budget)
+    cached = {
+        index: hit
+        for index, source in enumerate(sources)
+        if cache is not None and (hit := cache.get_search(source.name, request)) is not None
+    }
+    tasks = {
+        index: asyncio.ensure_future(source.search(request))
+        for index, source in enumerate(sources)
+        if index not in cached
+    }
+    pending: set[asyncio.Future] = set()
+    if tasks:
+        _, pending = await asyncio.wait(tasks.values(), timeout=budget)
     for task in pending:
         task.cancel()
     candidates: list[Candidate] = []
     seen: set[tuple[str, str]] = set()
-    for source, task in zip(sources, tasks, strict=True):
-        if task in pending:
-            log.warning("%s did not answer within %.1f s, leaving it out", source.name, budget)
-            continue
-        if task.cancelled():
-            continue
-        error = task.exception()
-        if error is not None:
-            log.warning("%s search failed: %s", source.name, type(error).__name__)
-            continue
-        for candidate in task.result():
+    for index, source in enumerate(sources):
+        found = cached.get(index)
+        if found is None:
+            task = tasks[index]
+            if task in pending:
+                log.warning("%s did not answer within %.1f s, leaving it out", source.name, budget)
+                continue
+            if task.cancelled():
+                continue
+            error = task.exception()
+            if error is not None:
+                log.warning("%s search failed: %s", source.name, type(error).__name__)
+                continue
+            found = task.result()
+            if cache is not None:
+                cache.put_search(source.name, request, found)
+        for candidate in found:
             key = (candidate.source, candidate.source_id)
             if key not in seen:
                 seen.add(key)
