@@ -1,0 +1,63 @@
+{
+  "streams": [
+    {
+      "name": "Torrentio\n4k HDR",
+      "title": "Inception 2010 PROPER Bluray 2160p AV1 HDR10 EN/ITA/FR/ES/DE OPUS 5.1-UH [UserHEVC]\n👤 293 💾 8.91 GB ⚙️ 1337x\n🇬🇧 / 🇮🇹 / 🇪🇸 / 🇫🇷 / 🇩🇪",
+      "infoHash": "2849211f150e966ef7924f43aec22727a644e10d",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay|10bit|HDR",
+        "filename": "Inception.2010.PROPER.Bluray.2160p.AV1.HDR10.OPUS.5.1-UH.mkv"
+      }
+    },
+    {
+      "name": "Torrentio\n4k DV | HDR",
+      "title": "Inception.2010.4K.HDR.DV.2160p.BDRemux Ita Eng x265-NAHOM\n👤 14 💾 62.59 GB ⚙️ ilCorSaRoNeRo\n🇬🇧 / 🇮🇹",
+      "infoHash": "e10c8eb30c64876fb82a9a49e2b9186e42191fe2",
+      "fileIdx": 2,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay REMUX|x265|DV|HDR",
+        "filename": "Inception.2010.4K.HDR.DV.2160p.BDRemux Ita Eng x265-NAHOM.mkv"
+      }
+    },
+    {
+      "name": "Torrentio\n1080p",
+      "title": "41 Movies To Watch While Stoned (all High IMDB) jZQ\nInception (2010) IMDB 8.8 [HEVC 2.00m 1920x800 02;28;08 2.3GB]/Inception.2010.1080p.BluRay.x265-RARBG.mp4\n👤 27 💾 2.31 GB ⚙️ TorrentGalaxy",
+      "infoHash": "4d1f7fab7348d5341d6262867910014e2c4608c1",
+      "fileIdx": 107,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|1080p|BluRay|hevc",
+        "filename": "Inception.2010.1080p.BluRay.x265-RARBG.mp4"
+      }
+    },
+    {
+      "name": "Torrentio\n1080p",
+      "title": "Inception.2010.1080p.BluRay.x265-RARBG\n👤 14 💾 2.31 GB ⚙️ RARBG",
+      "infoHash": "d0f9c63fb7e72a4680f516ee83271382e417e244",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|1080p|BluRay|x265",
+        "filename": "Inception.2010.1080p.BluRay.x265-RARBG.mp4"
+      }
+    },
+    {
+      "name": "Torrentio\n4k HDR",
+      "title": "Inception (2010) (2160p BluRay x265 HEVC 10bit HDR AAC 5.1 Tigole) [QxR]\n👤 39 💾 17.23 GB ⚙️ 1337x",
+      "infoHash": "c560112bc616685f3fac460ee3c848813c71489f",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay|hevc|10bit|HDR",
+        "filename": "Inception (2010) (2160p x265 10bit HDR Tigole).mkv",
+        "videoSize": 18500123456
+      }
+    },
+    {
+      "name": "Torrentio\n4k",
+      "title": "Inception.2010.2160p.BluRay.HEVC.DTS-HD.MA.5.1-COASTER\n👤 70 💾 86.12 GB ⚙️ RARBG",
+      "infoHash": "a75b82ad8477187109f80e7d3fee845923b78d7c",
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay|hevc"
+      }
+    }
+  ]
+}

@@ -48,6 +48,7 @@ Set these in the environment before you start CueSync.
 | `CUESYNC_HOST` | `127.0.0.1` | Address the server listens on. |
 | `CUESYNC_PORT` | `7000` | Port the server listens on. |
 | `CUESYNC_PUBLIC_URL` | from the request | The HTTPS address that Stremio uses to reach CueSync. |
+| `CUESYNC_TORRENTIO_URL` | `https://torrentio.strem.fun` | A Torrentio-compatible server that CueSync asks for the torrent behind the played file. It may include a config path. |
 
 Linux:
 

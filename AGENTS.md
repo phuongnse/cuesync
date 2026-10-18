@@ -39,6 +39,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/subtitles/`: subtitle model, decoding, SRT/VTT/ASS parsing, SRT writing and zip picking.
 - `src/cuesync/search.py`: concurrent source search, ranking and subtitle keys.
 - `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles, SubDL).
+- `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
 
