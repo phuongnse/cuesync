@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "agents": {
+    "claude": {"runtime": "claude-code", "provider": "anthropic", "oauth_token_secret": "CLAUDE_CODE_OAUTH_TOKEN"}
+  },
+  "agent": "claude",
+  "model": "sonnet",
+  "setup": [
+    "sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg",
+    "python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev]'"
+  ],
+  "checks": [
+    {"name": "test", "run": ".venv/bin/pytest -q"},
+    {"name": "lint", "run": ".venv/bin/ruff check . && .venv/bin/ruff format --check ."}
+  ],
+  "fix": {"max_auto_rounds": 2},
+  "merge": {"auto": false}
+}
