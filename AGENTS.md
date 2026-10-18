@@ -15,8 +15,8 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 
 ## How a request flows
 
-1. Stremio calls `GET /{config}/subtitles/{type}/{id}/{extra}.json` (the `{config}`
-   prefix arrives with the configuration issue). `id` is an IMDb id
+1. Stremio calls `GET /{config}/subtitles/{type}/{id}/{extra}.json` (`{config}` is the
+   base64url JSON of the user's settings). `id` is an IMDb id
    (`tt1375666`, or `tt0903747:1:2` for season 1 episode 2). `extra` carries `videoHash`
    (OpenSubtitles hash), `videoSize` and `filename` of the file being played.
 2. CueSync fetches candidate subtitles from the configured sources (OpenSubtitles, SubDL)
@@ -34,6 +34,8 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 
 - `src/cuesync/app.py`: FastAPI app implementing the Stremio addon protocol.
 - `src/cuesync/__main__.py`: `python -m cuesync` / `cuesync` entry point (uvicorn).
+- `src/cuesync/config.py`: user settings, their URL encoding and log redaction.
+- `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
 
 Add new modules under `src/cuesync/` by concern (for example `sources/`, `stream/`,

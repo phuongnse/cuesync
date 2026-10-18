@@ -13,6 +13,16 @@ where people speak and shifts and stretches the subtitles to match. It fixes con
 offsets and frame-rate drift (for example 25 fps subtitles on a 23.976 fps file). It does
 not translate or generate subtitles.
 
+## Install
+
+1. Run the server and make it reachable over HTTPS (for example with Tailscale Funnel).
+2. Open `https://<your-host>/configure`.
+3. Fill in the form: your subtitle languages, your subtitle source keys and your debrid
+   service.
+4. Use the install link, or paste the manifest URL into Stremio's addon search.
+
+The install URL contains your API keys. Keep it private and do not share it.
+
 ## Develop
 
 Python 3.12+ and ffmpeg.
@@ -23,7 +33,7 @@ On Linux and macOS (the scripts are what CI and NexKit run):
 scripts/setup.sh
 scripts/lint.sh
 scripts/test.sh
-.venv/bin/cuesync                   # http://127.0.0.1:7000/manifest.json
+.venv/bin/cuesync                   # http://127.0.0.1:7000/configure
 ```
 
 On Windows:
