@@ -1,0 +1,44 @@
+{
+  "total_pages": 1,
+  "total_count": 3,
+  "per_page": 60,
+  "page": 1,
+  "data": [
+    {
+      "id": "3000001",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "3000001",
+        "language": "en",
+        "download_count": 1200,
+        "moviehash_match": false,
+        "release": "Inception.2010.1080p.BluRay.x264",
+        "files": [{"file_id": 1001, "cd_number": 1, "file_name": "Inception.2010.1080p.BluRay.x264.srt"}]
+      }
+    },
+    {
+      "id": "3000002",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "3000002",
+        "language": "fr",
+        "download_count": 300,
+        "moviehash_match": true,
+        "release": "Inception.2010.720p.BluRay.x264-SPARKS",
+        "files": [{"file_id": 1002, "cd_number": 1, "file_name": "Inception.2010.720p.BluRay.x264-SPARKS.srt"}]
+      }
+    },
+    {
+      "id": "3000003",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "3000003",
+        "language": "de",
+        "download_count": 50,
+        "moviehash_match": false,
+        "release": "",
+        "files": [{"file_id": 1003, "cd_number": 1, "file_name": "Inception.german.srt"}]
+      }
+    }
+  ]
+}
