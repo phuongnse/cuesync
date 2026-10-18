@@ -25,8 +25,9 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
    size) and gets a direct HTTPS link to that file from the user's debrid service.
 4. It extracts a few short audio windows spread over the file with ffmpeg (HTTP range
    reads; never the whole file).
-5. For each window it estimates the subtitle offset, then fits `t' = a·t + b` across
-   windows, snapping `a` to known frame-rate ratios (25/23.976, 24/23.976, ...).
+5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle,
+   estimates the offset in each window, and keeps the ratio `a` and shift `b` in
+   `t' = a·t + b` that most windows agree on.
 6. It returns re-timed subtitles next to the originals, and caches the result by video
    hash so the next request is instant.
 
@@ -42,7 +43,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles, SubDL).
 - `src/cuesync/debrid/`: the `DebridProvider` protocol and the debrid clients (Real-Debrid, TorBox) that turn a `StreamRef` into a direct HTTPS link.
 - `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
-- `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, and per-window subtitle offsets by FFT cross-correlation.
+- `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window subtitle offsets by FFT cross-correlation, and the global correction (frame-rate ratio and shift) with its verdict.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
 
