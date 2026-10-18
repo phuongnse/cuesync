@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 
 import pytest
@@ -16,3 +17,31 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("CUESYNC_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("CUESYNC_CACHE_MAX_MB", raising=False)
     return tmp_path
+
+
+@pytest.fixture(scope="session")
+def mkv_bytes(tmp_path_factory: pytest.TempPathFactory) -> bytes:
+    """A 30 s mono mkv made with ffmpeg."""
+    path = tmp_path_factory.mktemp("mkv") / "tone.mkv"
+    source = "sine=frequency=440:sample_rate=8000"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            source,
+            "-t",
+            "30",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            str(path),
+        ],
+        check=True,
+    )
+    return path.read_bytes()

@@ -47,6 +47,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles, SubDL).
 - `src/cuesync/debrid/`: the `DebridProvider` protocol and the debrid clients (Real-Debrid, TorBox) that turn a `StreamRef` into a direct HTTPS link.
 - `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
+- `src/cuesync/torrent/`: reads one file of a torrent piece by piece and serves it on a loopback HTTP URL for ffmpeg, using libtorrent from the optional `torrent` extra. The sync jobs do not use it yet.
 - `src/cuesync/cache.py`: the SQLite plus files cache of searches, subtitles, speech timelines and sync results.
 - `src/cuesync/retime.py`: runs stream lookup, debrid link, audio windows and sync for the top subtitles and returns the correction found for each.
 - `src/cuesync/jobs.py`: the in-memory background sync jobs, deduplicated, limited in number and time.
