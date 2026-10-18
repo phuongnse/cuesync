@@ -42,7 +42,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/sources/`: the `SubtitleSource` protocol and the subtitle sources (OpenSubtitles, SubDL).
 - `src/cuesync/debrid/`: the `DebridProvider` protocol and the debrid clients (Real-Debrid, TorBox) that turn a `StreamRef` into a direct HTTPS link.
 - `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
-- `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues.
+- `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, and per-window subtitle offsets by FFT cross-correlation.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `tests/`: pytest tests.
 
