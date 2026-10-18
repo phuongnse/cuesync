@@ -143,7 +143,7 @@ The image sets `CUESYNC_HOST=0.0.0.0` so the published port reaches the server, 
 
 Task Scheduler starts CueSync when you log in. It is built into Windows, needs no extra
 download and stores no password. The task starts `pythonw.exe`, so no console window
-appears.
+appears. Without a console, CueSync writes its log to `cuesync.log` in the data directory.
 
 1. Install CueSync as in [Install](#install).
 2. Store the settings as user environment variables, then open a new terminal. The data

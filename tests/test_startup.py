@@ -116,3 +116,39 @@ def test_deployment_variables_are_documented():
     table = "\n".join(line for line in docs.splitlines() if line.startswith("|"))
     missing = sorted(name for name in names if f"`{name}`" not in table)
     assert not missing, f"not in the settings table of docs/running.md: {missing}"
+
+
+def test_main_logs_to_the_data_directory_without_console_streams(tmp_path, monkeypatch):
+    """`pythonw.exe` has no stdout or stderr. The server must still start and keep its log."""
+    from cuesync import __main__ as entry
+
+    data = tmp_path / "data"
+    monkeypatch.setenv("CUESYNC_DATA_DIR", str(data))
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    seen: dict[str, object] = {}
+
+    def fake_run(app, **kwargs):
+        seen["stdout"] = sys.stdout
+        seen["stderr"] = sys.stderr
+        print("serving")
+        seen["app"] = app
+
+    monkeypatch.setattr(entry.uvicorn, "run", fake_run)
+    entry.main()
+    log = seen["stdout"]
+    assert log is not None and log is seen["stderr"]
+    assert seen["app"] == "cuesync.app:app"
+    log.close()
+    assert (data / entry.LOG_NAME).read_text(encoding="utf-8") == "serving\n"
+
+
+def test_main_keeps_existing_streams(tmp_path, monkeypatch):
+    from cuesync import __main__ as entry
+
+    monkeypatch.setenv("CUESYNC_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(entry.uvicorn, "run", lambda app, **kwargs: None)
+    out, err = sys.stdout, sys.stderr
+    entry.main()
+    assert (sys.stdout, sys.stderr) == (out, err)
+    assert not (tmp_path / "data").exists()
