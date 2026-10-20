@@ -29,6 +29,8 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 4. It extracts a few short audio windows spread over the file with ffmpeg (HTTP range
    reads; never the whole file). Over a torrent the windows are read one at a time, with
    longer timeouts.
+   A window that runs out of time keeps the audio decoded so far as a shorter window, and a
+   window with no audio is dropped.
 5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle,
    estimates the offset in each window, and keeps the ratio `a` and shift `b` in
    `t' = a·t + b` that most windows agree on.

@@ -54,6 +54,14 @@ class AudioError(Exception):
     """Probing or extraction failed. The message never holds the file URL."""
 
 
+class AudioTimeout(AudioError):
+    """The process ran out of time. `output` holds the stdout read before that."""
+
+    def __init__(self, message: str, output: bytes) -> None:
+        super().__init__(message)
+        self.output = output
+
+
 @dataclass(frozen=True)
 class AudioTrack:
     index: int  # counts audio streams only, so it maps to `-map 0:a:{index}`
@@ -80,7 +88,8 @@ class AudioWindow:
 async def _run(args: list[str], timeout: float) -> bytes:
     """Run a process and return its stdout. It is killed on timeout and on cancellation.
 
-    The messages carry no stderr: it can echo the URL, or the CDN URL it redirects to.
+    A timeout raises `AudioTimeout`, which carries the stdout read so far. The messages
+    carry no stderr: it can echo the URL, or the CDN URL it redirects to, so it is discarded.
     """
     name = os.path.basename(args[0])
     try:
@@ -88,21 +97,29 @@ async def _run(args: list[str], timeout: float) -> bytes:
             *args,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     except FileNotFoundError:
         raise AudioError(f"{name} is not installed") from None
+    out = bytearray()
+
+    async def read() -> None:
+        assert proc.stdout is not None
+        while chunk := await proc.stdout.read(65536):
+            out.extend(chunk)
+        await proc.wait()
+
     try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        await asyncio.wait_for(read(), timeout)
     except TimeoutError:
-        raise AudioError(f"{name} timed out after {timeout:.0f} s") from None
+        raise AudioTimeout(f"{name} timed out after {timeout:.0f} s", bytes(out)) from None
     finally:
         if proc.returncode is None:
             proc.kill()
             await proc.wait()
     if proc.returncode != 0:
         raise AudioError(f"{name} failed (exit {proc.returncode})")
-    return stdout
+    return bytes(out)
 
 
 async def probe(url: str, timeout: float = PROBE_TIMEOUT_S) -> MediaInfo:
@@ -189,7 +206,8 @@ async def extract_windows(
 ) -> list[AudioWindow]:
     """Decode evenly spaced windows to mono 16 kHz PCM, a few ffmpeg processes at a time.
 
-    A window that fails is dropped with a warning. Raises `AudioError` when all fail.
+    A window that times out keeps the audio decoded so far as a shorter window. A window
+    that fails without audio is dropped with a warning. Raises `AudioError` when none has audio.
     """
     length = min(length_s, duration)
     starts = window_starts(duration, count, length_s, edge_s)
@@ -222,7 +240,18 @@ async def extract_windows(
             "pipe:1",
         ]
         async with semaphore:
-            return AudioWindow(start, await _run(args, timeout_s))
+            try:
+                return AudioWindow(start, await _run(args, timeout_s))
+            except AudioTimeout as exc:
+                kept = exc.output[: len(exc.output) // 2 * 2]
+                if not kept:
+                    raise
+                log.warning(
+                    "audio window at %.0f s timed out, kept %.1f s",
+                    start,
+                    len(kept) / 2 / SAMPLE_RATE,
+                )
+                return AudioWindow(start, kept)
 
     results = await asyncio.gather(*(one(s) for s in starts), return_exceptions=True)
     windows = []
