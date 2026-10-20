@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote
 
 _VIDEO_ID = re.compile(r"(tt\d+)(?::(\d+):(\d+))?")
 
@@ -39,7 +39,13 @@ def raw_extra_segment(raw_path: bytes) -> str:
 
 def parse_extra(extra: str) -> Extra:
     """Parse the `extra` text Stremio sends, such as
-    `videoHash=8e24...&videoSize=1478453234&filename=Movie.2010.1080p.mkv`."""
+    `videoHash=8e24...&videoSize=1478453234&filename=Movie.2010.1080p.mkv`.
+
+    Stremio desktop encodes the whole segment once more (`filename%3D...%26videoSize%3D...`),
+    so a segment without a plain `=` is decoded once before it is split.
+    """
+    if "=" not in extra:
+        extra = unquote(extra)
     values = dict(parse_qsl(extra, keep_blank_values=True))
     size = values.get("videoSize", "")
     return Extra(

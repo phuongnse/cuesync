@@ -41,6 +41,12 @@ def test_parse_extra_reads_all_fields():
     )
 
 
+def test_parse_extra_reads_a_segment_encoded_once_more():
+    # As Stremio desktop sends it: the query string passed through encodeURIComponent.
+    extra = "filename%3Da%2520b%2526c.mkv%26videoSize%3D123%26videoHash%3Dabc"
+    assert parse_extra(extra) == Extra(video_hash="abc", video_size=123, filename="a b&c.mkv")
+
+
 def test_parse_extra_ignores_unknown_keys():
     assert parse_extra("foo=bar&videoHash=abc") == Extra("abc", None, None)
 
