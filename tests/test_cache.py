@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 
 import numpy as np
 import pytest
@@ -105,6 +106,32 @@ def test_timeline_round_trip_and_persistence(tmp_path):
         np.testing.assert_array_equal(actual, expected)
         assert actual.dtype == expected.dtype
     assert second.get_timeline("abc", 124) is None
+    second.close()
+
+
+def test_sync_results_of_an_older_engine_are_dropped_but_timelines_stay(tmp_path):
+    windows = [(60.0, np.array([0, 1, 1, 0], dtype=np.float32))]
+    first = Cache(tmp_path)
+    first.put_timeline("abc", 123, windows)
+    first.put_sync("abc", "k", SYNCED)
+    first.close()
+    db = sqlite3.connect(tmp_path / "cuesync.sqlite3")
+    db.execute("PRAGMA user_version = 1")
+    db.close()
+    second = Cache(tmp_path)
+    assert second.get_sync("abc", "k") is None
+    stored = second.get_timeline("abc", 123)
+    assert stored is not None
+    assert [start for start, _ in stored] == [60.0]
+    second.close()
+
+
+def test_sync_result_of_the_current_engine_survives_reopening(tmp_path):
+    first = Cache(tmp_path)
+    first.put_sync("abc", "k", SYNCED)
+    first.close()
+    second = Cache(tmp_path)
+    assert second.get_sync("abc", "k") == SYNCED
     second.close()
 
 

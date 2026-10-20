@@ -11,7 +11,8 @@ CueSync fetches Vietnamese subtitles from SubDL, reads a few
 short audio windows of the exact file you play (through your Real-Debrid account), detects
 where people speak and shifts and stretches the subtitles to match. It fixes constant
 offsets and frame-rate drift (for example 25 fps subtitles on a 23.976 fps file). It does
-not translate or generate subtitles.
+not translate or generate subtitles. The shift comes from all the audio windows together, and
+a subtitle for a different cut keeps its original timing.
 
 Every listed subtitle is a re-timed entry. Pick any of them and that one is re-timed. A short
 "being synced" subtitle shows while it works, so reopen the subtitle menu after a moment. If

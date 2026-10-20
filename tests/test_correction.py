@@ -1,4 +1,4 @@
-"""Tests for the global correction: the fit, the stretch-and-measure search and its use.
+"""Tests for the global correction: the combined curve, the stretch-and-measure search, its use.
 
 The end-to-end test generates speech-like audio with ffmpeg and runs the whole chain.
 """
@@ -16,14 +16,13 @@ import pytest
 from cuesync.audio import extract_windows, window_starts
 from cuesync.subtitles import Cue
 from cuesync.sync import (
+    RATIOS,
     Correction,
     Verdict,
-    WindowOffset,
     align,
     apply_correction,
     audio_speech,
     estimate_offset,
-    fit_correction,
     subtitle_speech,
 )
 
@@ -40,13 +39,10 @@ SPEECH = (
 )
 
 
-def windows_for(a: float, b: float, centers=CENTERS) -> list[WindowOffset]:
-    """Confident windows for the true correction y = a*x + b, with x = (y - b) / a."""
-    out = []
-    for c in centers:
-        y = c * 1000.0
-        out.append(WindowOffset(float(c), round(y - (y - b) / a), 0.9, True))
-    return out
+def make_windows(
+    full: np.ndarray, starts: list[float], length_s: float
+) -> list[tuple[float, np.ndarray]]:
+    return [(s, full[round(s * FPS) : round((s + length_s) * FPS)]) for s in starts]
 
 
 def blocky(rng: np.random.Generator, frames: int) -> np.ndarray:
@@ -56,6 +52,18 @@ def blocky(rng: np.random.Generator, frames: int) -> np.ndarray:
     while i < frames:
         i += int(rng.uniform(0.5, 3.0) * FPS)
         run = int(rng.uniform(1.0, 4.0) * FPS)
+        out[i : i + run] = 1.0
+        i += run
+    return out
+
+
+def dense(rng: np.random.Generator, frames: int) -> np.ndarray:
+    """Speech runs of 2-8 s separated by gaps of 0.6-2.4 s, about 77% speech like a sitcom."""
+    out = np.zeros(frames, np.float32)
+    i = 0
+    while i < frames:
+        i += int(rng.uniform(0.6, 2.4) * FPS)
+        run = int(rng.uniform(2.0, 8.0) * FPS)
         out[i : i + run] = 1.0
         i += run
     return out
@@ -71,86 +79,6 @@ def runs(timeline: np.ndarray) -> list[tuple[int, int]]:
 def distort(cues: list[Cue], a: float, b: float) -> list[Cue]:
     """Subtitle cues that the correction y = a*x + b maps onto `cues`."""
     return [Cue(round((c.start_ms - b) / a), round((c.end_ms - b) / a), c.text) for c in cues]
-
-
-def test_fit_pure_offset() -> None:
-    result = fit_correction(windows_for(1.0, 3200))
-    assert result.verdict is Verdict.SYNCED
-    assert result.scale == 1.0
-    assert abs(result.offset_ms - 3200) <= 10
-    assert result.agreeing == 5
-
-
-def test_fit_frame_rate_drift() -> None:
-    result = fit_correction(windows_for(NTSC / 25, 0))
-    assert result.verdict is Verdict.SYNCED
-    assert result.scale == NTSC / 25
-    assert abs(result.offset_ms) <= 50
-
-
-def test_fit_drift_plus_offset() -> None:
-    result = fit_correction(windows_for(NTSC / 25, 2000))
-    assert result.verdict is Verdict.SYNCED
-    assert result.scale == NTSC / 25
-    assert abs(result.offset_ms - 2000) <= 50
-
-
-@pytest.mark.parametrize("a", (25 / NTSC, 24 / NTSC, NTSC / 24, 25 / 24, 24 / 25))
-def test_fit_finds_each_ratio(a: float) -> None:
-    result = fit_correction(windows_for(a, 1000))
-    assert result.verdict is Verdict.SYNCED
-    assert result.scale == a
-
-
-def test_fit_ignores_one_outlier() -> None:
-    offsets = windows_for(NTSC / 25, 2000)
-    offsets[2] = WindowOffset(3000.0, offsets[2].offset_ms + 40000, 0.9, True)
-    result = fit_correction(offsets)
-    assert result.verdict is Verdict.SYNCED
-    assert result.scale == NTSC / 25
-    assert abs(result.offset_ms - 2000) <= 50
-    assert result.agreeing == 4
-
-
-def test_fit_fails_when_windows_disagree() -> None:
-    offsets = [
-        WindowOffset(c, o, 0.9, True)
-        for c, o in zip(CENTERS, (0, 0, 8000, 8000, 20000), strict=True)
-    ]
-    result = fit_correction(offsets)
-    assert result == Correction(Verdict.FAILED, 1.0, 0, result.agreeing, result.residual_ms)
-
-
-def test_fit_fails_when_two_of_five_disagree() -> None:
-    offsets = windows_for(1.0, 3000)
-    offsets[1] = WindowOffset(1800.0, 9000, 0.9, True)
-    offsets[3] = WindowOffset(4200.0, -7000, 0.9, True)
-    assert fit_correction(offsets).verdict is Verdict.FAILED
-
-
-def test_fit_fails_with_fewer_than_three_confident() -> None:
-    offsets = windows_for(1.0, 3000)
-    offsets = [
-        o if i < 2 else WindowOffset(o.window_center_s, 0, 0.1, False)
-        for i, o in enumerate(offsets)
-    ]
-    assert fit_correction(offsets) == Correction(Verdict.FAILED, 1.0, 0, 0, 0.0)
-
-
-def test_fit_ignores_unconfident_windows() -> None:
-    offsets = windows_for(1.0, 3000)
-    offsets.append(WindowOffset(100.0, 55000, 0.1, False))
-    offsets.append(WindowOffset(200.0, -30000, 0.1, False))
-    result = fit_correction(offsets)
-    assert result.verdict is Verdict.SYNCED
-    assert result.agreeing == 5
-    assert abs(result.offset_ms - 3000) <= 10
-
-
-def test_fit_already_in_sync_is_unchanged() -> None:
-    result = fit_correction(windows_for(1.0, 40))
-    assert result.verdict is Verdict.UNCHANGED
-    assert result.scale == 1.0
 
 
 def test_align_finds_drift_beyond_the_search_range() -> None:
@@ -170,8 +98,6 @@ def test_align_finds_drift_beyond_the_search_range() -> None:
     subtitle = subtitle_speech(cues)
     plain = [estimate_offset(t, subtitle, s) for s, t in windows]
     assert sum(o.confident for o in plain) < len(plain)
-    fit = fit_correction(plain)
-    assert not (fit.verdict is Verdict.SYNCED and fit.scale == pytest.approx(a))
 
 
 def test_align_fails_on_a_different_cut() -> None:
@@ -181,6 +107,97 @@ def test_align_fails_on_a_different_cut() -> None:
     cues = [Cue(s * 10, e * 10, "x") for s, e in runs(other)]
     starts = window_starts(3000, 5, 120)
     windows = [(s, full[round(s * FPS) : round((s + 120) * FPS)]) for s in starts]
+    assert align(windows, cues).verdict is Verdict.FAILED
+
+
+def blocky_case(seed: int, a: float, b: float, count: int = 5):
+    full = blocky(np.random.default_rng(seed), 3600 * FPS)
+    cues = distort([Cue(s * 10, e * 10, "x") for s, e in runs(full)], a, b)
+    return full, cues, window_starts(3600, count, 120)
+
+
+@pytest.mark.parametrize("a", RATIOS[1:])
+def test_align_finds_each_ratio(a: float) -> None:
+    full, cues, starts = blocky_case(11, a, 1000)
+    result = align(make_windows(full, starts, 120), cues)
+    assert result.verdict is Verdict.SYNCED
+    assert result.scale == pytest.approx(a)
+    assert abs(result.offset_ms - 1000) <= 50
+
+
+def test_align_small_shift_is_unchanged() -> None:
+    full, cues, starts = blocky_case(12, 1.0, 40)
+    result = align(make_windows(full, starts, 120), cues)
+    assert result.verdict is Verdict.UNCHANGED
+    assert result.scale == 1.0
+
+
+def test_align_ignores_one_unrelated_window() -> None:
+    full, cues, starts = blocky_case(13, 1.0, 3000)
+    windows = make_windows(full, starts, 120)
+    other = blocky(np.random.default_rng(99), 120 * FPS)
+    windows[2] = (windows[2][0], other)
+    result = align(windows, cues)
+    assert result.verdict is Verdict.SYNCED
+    assert abs(result.offset_ms - 3000) <= 50
+    assert result.agreeing == 5
+
+
+def test_align_fails_with_two_windows() -> None:
+    full, cues, starts = blocky_case(14, 1.0, 3000, count=2)
+    assert align(make_windows(full, starts, 120), cues).verdict is Verdict.FAILED
+
+
+@pytest.mark.parametrize("seed", (0, 1, 6))
+def test_align_syncs_when_no_window_is_confident_alone(seed: int) -> None:
+    rng = np.random.default_rng(seed)
+    frames = 2000 * FPS
+    full = dense(rng, frames)
+    assert 0.7 < full.mean() < 0.8
+
+    # The subtitle misses some lines and times the others loosely, and the audio has laughs.
+    cues = []
+    for s, e in runs(full):
+        if rng.random() < 0.3:
+            continue
+        s, e = s + int(rng.uniform(-0.3, 0.3) * FPS), e + int(rng.uniform(-0.3, 0.3) * FPS)
+        if e > s >= 0:
+            cues.append(Cue(s * 10 - 4400, e * 10 - 4400, "x"))
+    cues = [c for c in cues if c.end_ms > 0]
+    audio = full.copy()
+    for _ in range(300):
+        p = int(rng.uniform(0, frames))
+        audio[p : p + int(rng.uniform(0.5, 2.0) * FPS)] = 1.0
+
+    windows = make_windows(audio, [300, 900, 1500], 60)
+    subtitle = subtitle_speech(cues)
+    assert not any(estimate_offset(t, subtitle, s).confident for s, t in windows)
+
+    result = align(windows, cues)
+    assert result.verdict is Verdict.SYNCED
+    assert result.scale == 1.0
+    assert abs(result.offset_ms - 4400) <= 100
+    assert result.agreeing == 3
+
+
+def test_align_fails_when_the_shift_jumps_between_windows() -> None:
+    full = dense(np.random.default_rng(3), 2000 * FPS)
+    starts = [300, 900, 1500]
+    cues: list[Cue] = []
+    for start, shift in zip(starts, (0, 12, 24), strict=True):
+        for s, e in runs(full[start * FPS : (start + 120) * FPS]):
+            base = (start - shift) * 1000  # the audio is `shift` seconds later than the cues
+            cues.append(Cue(s * 10 + base, e * 10 + base, "x"))
+    windows = make_windows(full, starts, 120)
+    assert align(windows, cues).verdict is Verdict.FAILED
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_align_fails_on_unrelated_dense_cues(seed: int) -> None:
+    rng = np.random.default_rng(100 + seed)
+    full = dense(rng, 2000 * FPS)
+    cues = [Cue(s * 10, e * 10, "x") for s, e in runs(dense(rng, 2000 * FPS))]
+    windows = make_windows(full, [300, 900, 1500], 60)
     assert align(windows, cues).verdict is Verdict.FAILED
 
 
