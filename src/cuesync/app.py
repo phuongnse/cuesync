@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from importlib.resources import files
@@ -25,7 +26,7 @@ from .cache import DEFAULT_MAX_BYTES, Cache
 from .config import LANGUAGE, InvalidConfig, RedactConfigFilter, UserConfig, decode_config
 from .jobs import JOB_LIMIT, JOB_TIMEOUT, Job, Jobs, JobState
 from .placeholder import placeholder_cues
-from .retime import Stages, pick, retime
+from .retime import Stages, retime
 from .search import MAX_SUBTITLES, build_sources, decode_key, encode_key, gather_candidates, rank
 from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
 from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
@@ -35,6 +36,8 @@ from .sync import Correction, Verdict, apply_correction
 log = logging.getLogger(__name__)
 
 MAX_HASH_LENGTH = 64
+# How many played videos the server remembers, so a re-timed link can start its job.
+MAX_VIDEOS = 256
 
 MANIFEST = {
     "id": "community.cuesync",
@@ -128,49 +131,15 @@ async def find_subtitles(
     )
     ranked = rank(candidates, (LANGUAGE,), extra.filename, MAX_SUBTITLES)
     base = f"{base_url(request)}/{request.path_params['config']}"
-    entries = []
     video_hash = extra.video_hash
-    if _can_sync(video_hash, extra):
-        jobs: Jobs = request.app.state.jobs
-        stages: Stages = request.app.state.stages
-        http: httpx.AsyncClient = request.app.state.http
-        listed: list[tuple[Candidate, str]] = []
-        to_start: list[Candidate] = []
-        for candidate in pick(ranked):
-            key = encode_key(candidate)
-            correction, job = _sync_state(cache, jobs, video_hash, key)
-            if correction is not None:
-                wanted = correction.verdict is Verdict.SYNCED
-            elif job is not None:
-                wanted = job.state in (JobState.PENDING, JobState.RUNNING)
-            else:
-                wanted = stages.debrid(config, http) is not None
-                if wanted:
-                    to_start.append(candidate)
-            if wanted:
-                listed.append((candidate, key))
-        if to_start:
-
-            async def work(cands: list[Candidate]) -> dict[Candidate, Correction]:
-                return await retime(stages, sources, http, config, video, extra, cands, cache=cache)
-
-            jobs.submit(video_hash, to_start, work)
-        numbers: dict[str, int] = {}
-        for candidate, key in listed:
-            language = candidate.language
-            numbers[language] = numbers.get(language, 0) + 1
-            entries.append(
-                {
-                    "id": f"cuesync-{language}-{numbers[language]}",
-                    "url": f"{base}/retimed/{video_hash}/{key}.srt",
-                    "lang": language,
-                }
-            )
-    entries.extend(
-        {"id": key, "url": f"{base}/sub/{key}.srt", "lang": candidate.language}
-        for candidate in ranked
-        for key in (encode_key(candidate),)
-    )
+    retimed = _can_sync(video_hash, extra)
+    if retimed:
+        _remember_video(request.app.state.videos, video_hash, video, extra)
+    entries = []
+    for candidate in ranked:
+        key = encode_key(candidate)
+        path = f"retimed/{video_hash}/{key}" if retimed else f"sub/{key}"
+        entries.append({"id": key, "url": f"{base}/{path}.srt", "lang": candidate.language})
     return {"subtitles": entries}
 
 
@@ -186,6 +155,40 @@ def _valid_hash(video_hash: str | None) -> bool:
 
 def _can_sync(video_hash: str | None, extra: Extra) -> bool:
     return _valid_hash(video_hash) and bool(extra.filename or extra.video_size is not None)
+
+
+def _remember_video(
+    videos: OrderedDict[str, tuple[VideoId, Extra]], video_hash: str, video: VideoId, extra: Extra
+) -> None:
+    """Keep what a re-timed link needs to start its job. The oldest videos are dropped."""
+    videos[video_hash] = (video, extra)
+    videos.move_to_end(video_hash)
+    while len(videos) > MAX_VIDEOS:
+        videos.popitem(last=False)
+
+
+def _start_job(
+    request: Request, config: UserConfig, video_hash: str, candidate: Candidate
+) -> Job | None:
+    """Start the sync job of one subtitle. None when it cannot run, so the original is served."""
+    known = request.app.state.videos.get(video_hash)
+    stages: Stages = request.app.state.stages
+    http: httpx.AsyncClient = request.app.state.http
+    if known is None or stages.debrid(config, http) is None:
+        return None
+    video, extra = known
+    cache: Cache = request.app.state.cache
+    sources = request.app.state.sources(config, http)
+
+    async def work(cands: list[Candidate]) -> dict[Candidate, Correction]:
+        correction = await retime(
+            stages, sources, http, config, video, extra, cands[0], cache=cache
+        )
+        return {} if correction is None else {cands[0]: correction}
+
+    jobs: Jobs = request.app.state.jobs
+    jobs.submit(video_hash, [candidate], work)
+    return jobs.get(video_hash, encode_key(candidate))
 
 
 def _sync_state(
@@ -255,6 +258,7 @@ def create_app(
     app.state.http = httpx.AsyncClient()
     app.state.stages = stages
     app.state.jobs = Jobs(job_limit, job_timeout)
+    app.state.videos = OrderedDict()
     if cache is None:
         cache = Cache(data_dir, max_bytes=cache_max_bytes(os.environ.get("CUESYNC_CACHE_MAX_MB")))
     app.state.cache = cache
@@ -321,14 +325,14 @@ def create_app(
             raise HTTPException(404, "Unknown subtitle")
         jobs: Jobs = request.app.state.jobs
         correction, job = _sync_state(request.app.state.cache, jobs, video_hash, key)
+        if correction is None and job is None:
+            job = _start_job(
+                request, config, video_hash, Candidate(source_name, source_id, language, "")
+            )
         if (
             correction is None
             and job is not None
-            and job.state
-            in (
-                JobState.PENDING,
-                JobState.RUNNING,
-            )
+            and job.state in (JobState.PENDING, JobState.RUNNING)
         ):
             # No-store, so the player asks again and gets the synced file once it is ready.
             return Response(

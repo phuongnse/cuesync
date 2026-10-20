@@ -1,8 +1,8 @@
 """Background sync jobs, one per video and subtitle.
 
-A subtitles request starts a job and returns at once. The job runs the slow work (stream
-lookup, audio reads, alignment) in the background, so Stremio is never kept waiting. Jobs live
-in memory only. A restart drops them and the next request starts them again.
+Fetching a re-timed subtitle starts a job and returns at once. The job runs the slow work
+(stream lookup, audio reads, alignment) in the background, so Stremio is never kept waiting.
+Jobs live in memory only. A restart drops them and the next fetch starts them again.
 """
 
 from __future__ import annotations
@@ -83,10 +83,7 @@ class Jobs:
         return [job for job in self._jobs.values() if job.video_hash == video_hash]
 
     def submit(self, video_hash: str, candidates: Sequence[Candidate], work: Work) -> None:
-        """Start one task for the candidates that have no job yet.
-
-        The task runs `work` once for all of them, so the audio is read once for every language.
-        """
+        """Start one task for the candidates that have no job yet."""
         self._purge()
         fresh = [
             candidate

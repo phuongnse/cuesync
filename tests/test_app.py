@@ -246,7 +246,7 @@ def test_subtitles_list_only_vietnamese_entries_that_link_to_srt_files():
     assert [entry["lang"] for entry in entries] == ["vie", "vie"]
     for entry in entries:
         assert set(entry) == {"id", "url", "lang"}
-        assert entry["url"] == f"http://testserver/{TOKEN}/sub/{entry['id']}.srt"
+        assert entry["url"] == f"http://testserver/{TOKEN}/retimed/abc/{entry['id']}.srt"
     assert decode_key(entries[0]["id"]) == ("fake", "3", "vie")
     (search,) = source.searches
     assert search.imdb_id == "tt1375666"
