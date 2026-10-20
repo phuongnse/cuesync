@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from array import array
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from itertools import pairwise
@@ -92,8 +93,9 @@ def media(tmp_path_factory: pytest.TempPathFactory) -> dict[str, bytes]:
 
 
 class RangeServer:
-    def __init__(self, files: dict[str, bytes]) -> None:
+    def __init__(self, files: dict[str, bytes], delay_s: float = 0.0) -> None:
         self.files = files
+        self.delay_s = delay_s
         self.served: dict[str, int] = {}
         owner = self
 
@@ -129,6 +131,8 @@ class RangeServer:
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         owner.served[self.path] = owner.served.get(self.path, 0) + len(chunk)
+                        if owner.delay_s:
+                            time.sleep(owner.delay_s)
                 except (BrokenPipeError, ConnectionResetError):
                     return
 
@@ -143,6 +147,14 @@ class RangeServer:
 @pytest.fixture(scope="session")
 def server(media: dict[str, bytes]):
     srv = RangeServer(media)
+    yield srv
+    srv.server.shutdown()
+    srv.server.server_close()
+
+
+@pytest.fixture(scope="session")
+def slow_server(media: dict[str, bytes]):
+    srv = RangeServer(media, delay_s=0.05)  # about 1.3 MB/s
     yield srv
     srv.server.shutdown()
     srv.server.server_close()
@@ -191,6 +203,19 @@ def test_seeking_reads_part_of_the_file(server: RangeServer, media: dict[str, by
     )
     assert len(windows) == 1
     assert server.served["/long.mkv"] < len(media["/long.mkv"]) * 0.25
+
+
+def test_timed_out_window_keeps_the_audio_decoded_so_far(slow_server: RangeServer):
+    windows = asyncio.run(
+        extract_windows(
+            slow_server.url("/long.mkv"), 240, count=1, length_s=60, edge_s=60, timeout_s=2.5
+        )
+    )
+    assert len(windows) == 1
+    window = windows[0]
+    assert window.start_s == pytest.approx(90.0)
+    assert 1 < window.duration_s < 60
+    assert first_loud(window) == pytest.approx(0.0, abs=0.03)
 
 
 def test_window_starts_spread():
@@ -327,6 +352,58 @@ def test_failure_does_not_leak_the_url(server: RangeServer, caplog: pytest.LogCa
     with pytest.raises(AudioError) as caught:
         asyncio.run(probe(url))
     assert "secret" not in str(caught.value)
+
+
+def fake_tool(tmp_path: Path, body: str) -> str:
+    script = tmp_path / "tool"
+    script.write_text(f"#!/bin/sh\n{body}\n")
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_timed_out_window_keeps_whole_samples(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    recorder = Recorder(monkeypatch)
+    monkeypatch.setattr(audio, "FFMPEG", fake_tool(tmp_path, "printf abc\nexec sleep 30"))
+    with caplog.at_level("DEBUG"):
+        windows = asyncio.run(
+            extract_windows("http://x/?token=secret", 1000, count=1, length_s=5, timeout_s=0.5)
+        )
+    assert len(windows) == 1
+    assert windows[0].samples == b"ab"
+    assert recorder.procs
+    assert all(p.returncode is not None for p in recorder.procs)
+    assert "secret" not in caplog.text
+
+
+def test_timed_out_window_without_audio_is_dropped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    recorder = Recorder(monkeypatch)
+    monkeypatch.setattr(audio, "FFMPEG", fake_tool(tmp_path, "exec sleep 30"))
+    with caplog.at_level("DEBUG"), pytest.raises(AudioError, match="no audio window") as caught:
+        asyncio.run(
+            extract_windows("http://x/?token=secret", 1000, count=2, length_s=5, timeout_s=0.5)
+        )
+    assert len(recorder.procs) == 2
+    assert all(p.returncode is not None for p in recorder.procs)
+    assert "secret" not in str(caught.value)
+    assert "secret" not in caplog.text
+
+
+def test_run_timeout_carries_the_output_so_far(monkeypatch: pytest.MonkeyPatch):
+    recorder = Recorder(monkeypatch)
+    with pytest.raises(audio.AudioTimeout) as caught:
+        asyncio.run(audio._run(SLEEP, timeout=0.5))
+    assert caught.value.output == b""
+    assert recorder.procs[0].returncode is not None
+
+
+def test_probe_fails_on_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(audio, "FFPROBE", fake_tool(tmp_path, "exec sleep 30"))
+    with pytest.raises(AudioError, match="timed out"):
+        asyncio.run(probe("http://x/?token=secret", timeout=0.5))
 
 
 def test_concurrency_is_limited(monkeypatch: pytest.MonkeyPatch):
