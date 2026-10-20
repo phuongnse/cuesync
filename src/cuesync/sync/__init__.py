@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from cuesync.sync.correction import (
+    ENGINE_VERSION,
     RATIOS,
     Correction,
     Verdict,
     align,
     apply_correction,
-    fit_correction,
 )
 from cuesync.sync.offset import WindowOffset, estimate_offset
 from cuesync.sync.speech import audio_speech, bridge_gaps, is_non_speech, subtitle_speech
 
 __all__ = [
+    "ENGINE_VERSION",
     "RATIOS",
     "Correction",
     "Verdict",
@@ -23,7 +24,6 @@ __all__ = [
     "audio_speech",
     "bridge_gaps",
     "estimate_offset",
-    "fit_correction",
     "is_non_speech",
     "subtitle_speech",
 ]

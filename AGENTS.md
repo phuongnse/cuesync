@@ -28,9 +28,10 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
    reads; never the whole file).
    A window that runs out of time keeps the audio decoded so far as a shorter window, and a
    window with no audio is dropped.
-5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle,
-   estimates the offset in each window, and keeps the ratio `a` and shift `b` in
-   `t' = a·t + b` that most windows agree on.
+5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle.
+   For each ratio the per-window agreement curves are summed, weighted by window length. The
+   combined peak gives the shift `b` in `t' = a·t + b`, and the ratio `a` with the strongest
+   peak wins. A weak or ambiguous peak, or fewer than three usable windows, means failed.
 6. The subtitles list returns at once, without waiting for steps 3 to 5. When the request can
    be synced (it has a video hash and a filename or size), every subtitle is listed once, as a
    re-timed entry. Listing starts no job. Picking an entry fetches its URL, which starts a
@@ -40,6 +41,8 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
    when the result is a sync, and the original subtitle otherwise (also for a user with no
    Real-Debrid key). The speech timeline is cached by video hash and size, so a second subtitle
    picked for the same file skips steps 3 and 4. A failed job is remembered for ten minutes.
+   Stored sync results are dropped when the sync engine version changes, while speech timelines
+   stay.
    A request that cannot be synced lists the original subtitles. `/{config}/status/{videoHash}.json`
    lists the jobs for debugging.
 
@@ -59,7 +62,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/retime.py`: runs stream lookup, Real-Debrid link, audio windows and sync for one subtitle and returns its correction.
 - `src/cuesync/jobs.py`: the in-memory background sync jobs, deduplicated, limited in number and time.
 - `src/cuesync/placeholder.py`: the "being synced" subtitle served while a job runs.
-- `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window subtitle offsets by FFT cross-correlation, and the global correction (frame-rate ratio and shift) with its verdict.
+- `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window agreement curves by FFT cross-correlation and their weighted sum, and the global correction (frame-rate ratio and shift) with its verdict.
 - `src/cuesync/configure.html`: the `/configure` page that builds the install URL.
 - `Dockerfile`, `compose.yaml`, `deploy/`: the Docker image, the Compose example and the Tailscale serve config.
 - `tests/`: pytest tests.

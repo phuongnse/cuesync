@@ -1,4 +1,4 @@
-"""One correction for the whole subtitle, from the offsets measured in the audio windows.
+"""One correction for the whole subtitle, from the agreement of all the audio windows.
 
 The correction is `video time = a * subtitle time + b`. The speed ratio `a` is 1 or a common
 frame-rate ratio, never an arbitrary fitted slope. Times are in milliseconds. These are pure
@@ -8,20 +8,21 @@ functions with no I/O.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 
 import numpy as np
 
 from cuesync.subtitles import Cue
-from cuesync.sync.offset import SEARCH_S, WindowOffset, estimate_offset
-from cuesync.sync.speech import subtitle_speech
+from cuesync.sync.offset import SEARCH_S, agreement, find_peak
+from cuesync.sync.speech import FRAME_RATE, subtitle_speech
 
 NTSC = 24000 / 1001  # the real rate behind "23.976"
 RATIOS = (1.0, 25 / NTSC, NTSC / 25, 24 / NTSC, NTSC / 24, 25 / 24, 24 / 25)
-INLIER_MS = 500  # a window agrees when its shift is this close to the median shift
-MIN_AGREEING = 3
-AGREE_FRACTION = 0.75  # of the confident windows
+MIN_WINDOWS = 3  # windows with enough speech, or one cannot tell a different cut from a match
+COMBINED_PEAK_RATIO = 2.0  # the combined peak's gain over the next best peak's
+COMBINED_SIGMAS = 4.0  # the combined peak's gain over the median, in standard deviations
+ENGINE_VERSION = 2  # bump when a change makes stored sync results stale
 UNCHANGED_MS = 100  # a shift this small is not worth a re-timed copy
 
 
@@ -36,50 +37,12 @@ class Correction:
     verdict: Verdict
     scale: float  # a
     offset_ms: int  # b
-    agreeing: int  # confident windows that fit
-    residual_ms: float  # mean |b_i - b| over the agreeing windows
+    agreeing: int  # windows in the combined curve
+    residual_ms: float  # mean |own best shift - chosen shift| over those windows
 
 
-def _verdict(confident: int, agreeing: int, scale: float, offset: float) -> Verdict:
-    if confident < MIN_AGREEING or agreeing < MIN_AGREEING or agreeing < AGREE_FRACTION * confident:
-        return Verdict.FAILED
-    if scale == 1.0 and abs(offset) <= UNCHANGED_MS:
-        return Verdict.UNCHANGED
-    return Verdict.SYNCED
-
-
-def _failed(agreeing: int = 0, residual_ms: float = 0.0) -> Correction:
-    return Correction(Verdict.FAILED, 1.0, 0, agreeing, residual_ms)
-
-
-def fit_correction(offsets: Sequence[WindowOffset], ratios: Sequence[float] = RATIOS) -> Correction:
-    """Fit `y = a*x + b` over the confident windows, with `a` taken from `ratios`.
-
-    Here `y` is video time (the window centre) and `x` is subtitle time (`y - offset`). For
-    each ratio the shifts `y - a*x` of the windows should agree. The ratio with the most
-    agreeing windows wins, then the smallest residual, then the earlier one in `ratios`.
-    """
-    confident = [o for o in offsets if o.confident]
-    if len(confident) < MIN_AGREEING:
-        return _failed()
-    y = np.array([o.window_center_s * 1000 for o in confident])
-    x = y - np.array([o.offset_ms for o in confident], dtype=np.float64)
-
-    best: tuple[int, float, float, float] | None = None  # agreeing, residual, a, b
-    for a in ratios:
-        shifts = y - a * x
-        inliers = shifts[np.abs(shifts - np.median(shifts)) <= INLIER_MS]
-        b = float(inliers.mean())
-        residual = float(np.abs(inliers - b).mean())
-        if best is None or (len(inliers), -residual) > (best[0], -best[1]):
-            best = (len(inliers), residual, a, b)
-    if best is None:
-        return _failed()
-    agreeing, residual, a, b = best
-    verdict = _verdict(len(confident), agreeing, a, b)
-    if verdict is Verdict.FAILED:
-        return _failed(agreeing, residual)
-    return Correction(verdict, a, round(b), agreeing, residual)
+def _failed() -> Correction:
+    return Correction(Verdict.FAILED, 1.0, 0, 0, 0.0)
 
 
 def align(
@@ -92,27 +55,40 @@ def align(
     """Find the correction that lines the cues up with the audio windows.
 
     Each window is `(start_s, speech timeline)`. For each ratio the cues are stretched
-    first and the windows measured again, so a drift that would push late windows out of the
-    search range is still found. The result is the ratio under which most windows agree.
+    first, so a drift that would push late windows out of the search range is still found.
+    The agreement curves of the windows are summed, weighted by window length, and the
+    peak of that one curve gives the shift. The ratio whose peak stands out most wins, and
+    when no ratio has a clear peak, or fewer than `MIN_WINDOWS` windows have enough speech,
+    the result is failed.
     """
+    reach = round(search_s * FRAME_RATE)
     best = _failed()
+    best_sigmas = 0.0
     for a in ratios:
         stretched = [Cue(round(c.start_ms * a), round(c.end_ms * a), c.text) for c in cues]
         subtitle = subtitle_speech(stretched)
-        offsets = [
-            estimate_offset(timeline, subtitle, start_s, search_s=search_s)
-            for start_s, timeline in windows
-        ]
-        fit = fit_correction(offsets, ratios=(1.0,))
-        if fit.verdict is Verdict.FAILED:
+        curves, weights = [], []
+        for start_s, timeline in windows:
+            curve = agreement(timeline, subtitle, start_s, search_s=search_s)
+            if curve is not None:
+                curves.append(curve)
+                weights.append(len(timeline))
+        if len(curves) < MIN_WINDOWS:
             continue
-        verdict = _verdict(sum(o.confident for o in offsets), fit.agreeing, a, fit.offset_ms)
-        candidate = replace(fit, verdict=verdict, scale=a)
-        if best.verdict is Verdict.FAILED or (candidate.agreeing, -candidate.residual_ms) > (
-            best.agreeing,
-            -best.residual_ms,
+        combined = np.average(curves, axis=0, weights=weights)
+        peak = find_peak(combined, reach, peak_ratio=COMBINED_PEAK_RATIO, sigmas=COMBINED_SIGMAS)
+        if not peak.confident or (
+            best.verdict is not Verdict.FAILED and peak.sigmas <= best_sigmas
         ):
-            best = candidate
+            continue
+        offset_ms = peak.shift * (1000 // FRAME_RATE)
+        own = np.array([reach - int(np.argmax(c)) for c in curves])
+        residual_ms = float(np.abs(own - peak.shift).mean()) * (1000 // FRAME_RATE)
+        verdict = (
+            Verdict.UNCHANGED if a == 1.0 and abs(offset_ms) <= UNCHANGED_MS else Verdict.SYNCED
+        )
+        best = Correction(verdict, a, offset_ms, len(curves), residual_ms)
+        best_sigmas = peak.sigmas
     return best
 
 

@@ -2,8 +2,9 @@
 
 Small facts (search results, sync results and the file index) live in SQLite. Subtitles and
 speech timelines are files under the data directory, and the least recently used ones are
-deleted when they pass the size limit. A cache failure never breaks a request: it is logged
-and counts as a miss.
+deleted when they pass the size limit. Sync results of an older sync engine are dropped when the
+database is opened, and speech timelines are kept. A cache failure never breaks a request: it is
+logged and counts as a miss.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ import numpy as np
 
 from cuesync.sources.base import Candidate, SubtitleRequest
 from cuesync.subtitles import Cue, parse_text, write_srt
-from cuesync.sync import Correction, Verdict
+from cuesync.sync import ENGINE_VERSION, Correction, Verdict
 
 SEARCH_TTL_S = 3600
 FAILURE_RETRY_S = 24 * 3600
@@ -97,6 +98,9 @@ class Cache:
                 self._data_dir / "cuesync.sqlite3", check_same_thread=False, isolation_level=None
             )
             db.executescript(_SCHEMA)
+            if db.execute("PRAGMA user_version").fetchone()[0] != ENGINE_VERSION:
+                db.execute("DELETE FROM sync")
+                db.execute(f"PRAGMA user_version = {int(ENGINE_VERSION)}")
             self._db = db
         return self._db
 
