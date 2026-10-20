@@ -23,7 +23,7 @@ from cuesync.debrid import DebridProvider, debrid_provider
 from cuesync.search import encode_key
 from cuesync.sources.base import Candidate, SubtitleSource
 from cuesync.stream import StreamRef, find_stream
-from cuesync.stremio import Extra, VideoId
+from cuesync.stremio import Extra, VideoId, video_key
 from cuesync.subtitles import Cue
 from cuesync.sync import Correction, align, audio_speech
 
@@ -119,15 +119,17 @@ async def retime(
     """
     if extra.filename is None and extra.video_size is None:
         return None
-    video_hash = extra.video_hash
+    vkey = video_key(extra)
     key = encode_key(candidate)
-    if video_hash:
-        stored = cache.get_sync(video_hash, key)
+    if vkey:
+        stored = cache.get_sync(vkey, key)
         if stored is not None:
             return stored
 
-    cacheable = bool(video_hash) and extra.video_size is not None
-    timelines = cache.get_timeline(video_hash, extra.video_size) if cacheable else None
+    # A derived key already includes the size, so only a hash needs a size to be cacheable.
+    cacheable = vkey is not None and (extra.video_size is not None or vkey != extra.video_hash)
+    size = extra.video_size or 0
+    timelines = cache.get_timeline(vkey, size) if cacheable else None
     url = None
     if timelines is None:
         url = await _audio_source(stages, client, config, video, extra)
@@ -141,10 +143,10 @@ async def retime(
     if fresh is not None:
         timelines = fresh
         if cacheable:
-            cache.put_timeline(video_hash, extra.video_size, fresh)
+            cache.put_timeline(vkey, size, fresh)
     if timelines is None or not downloaded:
         return None
     correction = await asyncio.to_thread(stages.align, timelines, downloaded[0][1])
-    if video_hash:
-        cache.put_sync(video_hash, key, correction)
+    if vkey:
+        cache.put_sync(vkey, key, correction)
     return correction

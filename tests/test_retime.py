@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 import time
 from contextlib import ExitStack
@@ -26,6 +27,7 @@ from test_app import FakeSource, fake_candidate
 TOKEN = encode_config(UserConfig(debrid_api_key="k"))
 NO_DEBRID = encode_config(UserConfig())
 PATH = "subtitles/movie/tt1375666/videoHash=abc&filename=a.mkv.json"
+HASHLESS = "subtitles/movie/tt1375666/filename=a.mkv.json"
 SIZED_PATH = "subtitles/movie/tt1375666/videoHash=abc&videoSize=123&filename=a.mkv.json"
 SYNCED = Correction(Verdict.SYNCED, 1.0, 2000, 5, 10.0)
 STREAM = StreamRef("a" * 40, 0, "a.mkv", 123)
@@ -47,6 +49,7 @@ class FakeStages:
     extract_delay: float = 0.0
     gate: threading.Event | None = None
     stream_calls: int = 0
+    filenames: list = field(default_factory=list)
     extract_calls: int = 0
     align_calls: int = 0
     aligned: list = field(default_factory=list)
@@ -55,6 +58,7 @@ class FakeStages:
 
     async def find_stream(self, client, video, filename, size):
         self.stream_calls += 1
+        self.filenames.append(filename)
         return self.stream
 
     def debrid(self, config, client):
@@ -129,8 +133,8 @@ def ids_of(entries: list[dict]) -> list[str]:
     return [e["id"] for e in entries]
 
 
-def status_of(client: TestClient, video_hash: str = "abc", token: str = TOKEN) -> dict:
-    response = client.get(f"/{token}/status/{video_hash}.json")
+def status_of(client: TestClient, video_key: str = "abc", token: str = TOKEN) -> dict:
+    response = client.get(f"/{token}/status/{video_key}.json")
     assert response.status_code == 200
     return response.json()
 
@@ -290,10 +294,16 @@ def test_request_without_file_details_lists_the_originals_only(make_client):
     assert fake.stream_calls == 0
 
 
-@pytest.mark.parametrize(
-    "extra", ["filename=a.mkv", "videoHash=a%2Fb&filename=a.mkv", f"videoHash={'a' * 65}&size=1"]
-)
-def test_request_without_a_plain_video_hash_lists_the_originals_only(make_client, extra):
+def test_request_without_a_hash_but_with_a_filename_or_size_lists_retimed_entries(make_client):
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, FakeStages())
+    for extra in ("filename=a.mkv", "videoSize=5", "videoHash=a%2Fb&filename=a.mkv"):
+        (entry,) = entries_of(client, path=f"subtitles/movie/tt1375666/{extra}.json")
+        assert re.fullmatch(rf".*/{TOKEN}/retimed/[0-9a-f]{{32}}/{entry['id']}\.srt", entry["url"])
+
+
+@pytest.mark.parametrize("extra", ["videoHash=abc&size=1", f"videoHash={'a' * 65}&size=1"])
+def test_request_without_a_filename_or_video_size_lists_the_originals_only(make_client, extra):
     fake = FakeStages()
     source = FakeSource(candidates=[fake_candidate("1", "vie")])
     client = make_client(source, fake)
@@ -301,6 +311,44 @@ def test_request_without_a_plain_video_hash_lists_the_originals_only(make_client
     assert "/sub/" in entry["url"]
     settle(client)
     assert fake.stream_calls == 0
+
+
+def test_hashless_entry_is_synced_under_a_key_that_hides_the_filename(make_client):
+    fake = FakeStages()
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, fake)
+    entries = entries_of(client, path=HASHLESS)
+    assert re.search(r"/retimed/[0-9a-f]{32}/", entries[0]["url"])
+    assert "a.mkv" not in entries[0]["url"]
+    first = pick_entry(client, entries[0])
+    assert MESSAGES["vie"] in first.content.decode()
+    settle(client)
+    assert fake.filenames == ["a.mkv"]
+    assert pick_entry(client, entries[0]).content.decode() == SHIFTED
+
+
+def test_second_subtitle_of_a_hashless_listing_reuses_the_timeline(make_client):
+    fake = FakeStages()
+    source = FakeSource(candidates=[fake_candidate("1", "vie"), fake_candidate("2", "vie")])
+    client = make_client(source, fake)
+    entries = entries_of(client, path=HASHLESS)
+    pick_entry(client, entries[0])
+    settle(client)
+    pick_entry(client, entries[1])
+    settle(client)
+    assert fake.stream_calls == 1
+    assert fake.extract_calls == 1
+    assert fake.align_calls == 2
+
+
+def test_status_accepts_the_derived_video_key(make_client):
+    source = FakeSource(candidates=[fake_candidate("1", "vie")])
+    client = make_client(source, FakeStages())
+    entries = entries_of(client, path=HASHLESS)
+    pick_entry(client, entries[0])
+    settle(client)
+    key = path_of(entries[0]).split("/")[3]
+    assert [j["subtitle"] for j in status_of(client, key)["jobs"]] == [entries[0]["id"]]
 
 
 def test_slow_audio_stage_does_not_hold_up_the_list_or_the_pick(make_client):
@@ -424,6 +472,7 @@ def test_retimed_link_with_a_bad_key_or_hash_is_not_found(make_client):
     client = make_client(FakeSource(), FakeStages())
     assert client.get(f"/{TOKEN}/retimed/abc/garbage.srt").status_code == 404
     assert client.get(f"/{TOKEN}/retimed/a-b/{original('1')}.srt").status_code == 404
+    assert client.get(f"/{TOKEN}/retimed/{'a' * 65}/{original('1')}.srt").status_code == 404
 
 
 def test_remembered_videos_are_limited(make_client, monkeypatch):

@@ -18,7 +18,8 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 1. Stremio calls `GET /{config}/subtitles/{type}/{id}/{extra}.json` (`{config}` is the
    base64url JSON of the user's settings). `id` is an IMDb id
    (`tt1375666`, or `tt0903747:1:2` for season 1 episode 2). `extra` carries `videoHash`
-   (the video's hash), `videoSize` and `filename` of the file being played.
+   (the video's hash), `videoSize` and `filename` of the file being played. A request may come
+   before Stremio knows the hash, with only `filename` or `videoSize`.
 2. CueSync fetches candidate subtitles from SubDL, always in Vietnamese (`vie`), and
    normalizes them to UTF-8 SRT. At most five are listed.
 3. It finds the torrent behind the played file (Torrentio lookup matched on filename and
@@ -33,17 +34,18 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
    combined peak gives the shift `b` in `t' = a·t + b`, and the ratio `a` with the strongest
    peak wins. A weak or ambiguous peak, or fewer than three usable windows, means failed.
 6. The subtitles list returns at once, without waiting for steps 3 to 5. When the request can
-   be synced (it has a video hash and a filename or size), every subtitle is listed once, as a
+   be synced (it has a filename or size), every subtitle is listed once, as a
    re-timed entry. Listing starts no job. Picking an entry fetches its URL, which starts a
-   background job for that one subtitle (one per video hash and subtitle, at most two at a
-   time, five minutes each) running steps 3 to 5. Until it finishes, the URL serves a short
-   "being synced, reopen the menu" subtitle. Afterwards the same URL serves the re-timed file
-   when the result is a sync, and the original subtitle otherwise (also for a user with no
-   Real-Debrid key). The speech timeline is cached by video hash and size, so a second subtitle
+   background job for that one subtitle (one per video key and subtitle, at most two at a
+   time, five minutes each) running steps 3 to 5. The video key is the video hash, or a digest
+   of filename and size when there is no valid hash, so a URL never shows the filename. Until
+   it finishes, the URL serves a short "being synced, reopen the menu" subtitle. Afterwards the
+   same URL serves the re-timed file when the result is a sync, and the original subtitle
+   otherwise (also for a user with no Real-Debrid key). The speech timeline is cached by video key and size, so a second subtitle
    picked for the same file skips steps 3 and 4. A failed job is remembered for ten minutes.
    Stored sync results are dropped when the sync engine version changes, while speech timelines
    stay.
-   A request that cannot be synced lists the original subtitles. `/{config}/status/{videoHash}.json`
+   A request that cannot be synced lists the original subtitles. `/{config}/status/{videoKey}.json`
    lists the jobs for debugging.
 
 ## Layout

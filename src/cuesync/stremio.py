@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, unquote
 
 _VIDEO_ID = re.compile(r"(tt\d+)(?::(\d+):(\d+))?")
+MAX_VIDEO_KEY_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -66,3 +69,22 @@ def parse_video_id(id: str) -> VideoId:
         season=int(season) if season is not None else None,
         episode=int(episode) if episode is not None else None,
     )
+
+
+def valid_video_key(value: str | None) -> bool:
+    """Jobs are keyed by the video key and it is part of a URL path, so it must be plain."""
+    return (
+        bool(value) and value.isascii() and value.isalnum() and len(value) <= MAX_VIDEO_KEY_LENGTH
+    )
+
+
+def video_key(extra: Extra) -> str | None:
+    """The name of the played file in jobs, caches and re-timed URLs. The video hash when it is
+    plain, else a digest of filename and size, so the URL never shows the filename. None
+    without a filename or a size."""
+    if extra.filename is None and extra.video_size is None:
+        return None
+    if valid_video_key(extra.video_hash):
+        return extra.video_hash
+    data = json.dumps([extra.filename, extra.video_size]).encode()
+    return hashlib.sha256(data).hexdigest()[:32]

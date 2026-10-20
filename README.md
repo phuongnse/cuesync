@@ -16,7 +16,8 @@ a subtitle for a different cut keeps its original timing.
 
 Every listed subtitle is a re-timed entry. Pick any of them and that one is re-timed. A short
 "being synced" subtitle shows while it works, so reopen the subtitle menu after a moment. If
-re-timing does not help, you get the original subtitle.
+re-timing does not help, you get the original subtitle. Entries are re-timed even when Stremio
+has not yet sent the file's hash, as long as it sends the filename or size.
 
 ## Install
 

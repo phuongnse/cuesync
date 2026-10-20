@@ -1,6 +1,15 @@
+import re
+
 import pytest
 
-from cuesync.stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
+from cuesync.stremio import (
+    Extra,
+    VideoId,
+    parse_extra,
+    parse_video_id,
+    raw_extra_segment,
+    video_key,
+)
 
 
 @pytest.mark.parametrize(
@@ -75,3 +84,28 @@ def test_parse_video_id_episode():
 def test_parse_video_id_rejects_malformed(id):
     with pytest.raises(ValueError):
         parse_video_id(id)
+
+
+def test_video_key_is_the_plain_video_hash():
+    assert video_key(Extra("abc123", None, "a.mkv")) == "abc123"
+
+
+@pytest.mark.parametrize("video_hash", [None, "a/b", "é", "a" * 65])
+def test_video_key_is_a_digest_without_a_plain_video_hash(video_hash):
+    key = video_key(Extra(video_hash, 5, "a.mkv"))
+    assert key is not None
+    assert re.fullmatch(r"[0-9a-f]{32}", key)
+    assert "a.mkv" not in key
+
+
+def test_video_key_depends_on_filename_and_size():
+    key = video_key(Extra(None, 5, "a.mkv"))
+    assert video_key(Extra("a/b", 5, "a.mkv")) == key
+    assert video_key(Extra(None, 6, "a.mkv")) != key
+    assert video_key(Extra(None, 5, "b.mkv")) != key
+    assert video_key(Extra(None, None, "")) != video_key(Extra(None, None, None))
+
+
+def test_video_key_needs_a_filename_or_a_size():
+    assert video_key(Extra("abc", None, None)) is None
+    assert video_key(Extra(None, None, None)) is None

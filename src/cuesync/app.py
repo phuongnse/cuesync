@@ -29,13 +29,20 @@ from .placeholder import placeholder_cues
 from .retime import Stages, retime
 from .search import MAX_SUBTITLES, build_sources, decode_key, encode_key, gather_candidates, rank
 from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
-from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
+from .stremio import (
+    Extra,
+    VideoId,
+    parse_extra,
+    parse_video_id,
+    raw_extra_segment,
+    valid_video_key,
+    video_key,
+)
 from .subtitles import write_srt
 from .sync import Correction, Verdict, apply_correction
 
 log = logging.getLogger(__name__)
 
-MAX_HASH_LENGTH = 64
 # How many played videos the server remembers, so a re-timed link can start its job.
 MAX_VIDEOS = 256
 
@@ -131,47 +138,32 @@ async def find_subtitles(
     )
     ranked = rank(candidates, (LANGUAGE,), extra.filename, MAX_SUBTITLES)
     base = f"{base_url(request)}/{request.path_params['config']}"
-    video_hash = extra.video_hash
-    retimed = _can_sync(video_hash, extra)
-    if retimed:
-        _remember_video(request.app.state.videos, video_hash, video, extra)
+    vkey = video_key(extra)
+    if vkey:
+        _remember_video(request.app.state.videos, vkey, video, extra)
     entries = []
     for candidate in ranked:
-        key = encode_key(candidate)
-        path = f"retimed/{video_hash}/{key}" if retimed else f"sub/{key}"
-        entries.append({"id": key, "url": f"{base}/{path}.srt", "lang": candidate.language})
+        sub_key = encode_key(candidate)
+        path = f"retimed/{vkey}/{sub_key}" if vkey else f"sub/{sub_key}"
+        entries.append({"id": sub_key, "url": f"{base}/{path}.srt", "lang": candidate.language})
     return {"subtitles": entries}
 
 
-def _valid_hash(video_hash: str | None) -> bool:
-    """Jobs are keyed by the video hash and it is part of a URL path, so it must be plain."""
-    return (
-        bool(video_hash)
-        and video_hash.isascii()
-        and video_hash.isalnum()
-        and len(video_hash) <= MAX_HASH_LENGTH
-    )
-
-
-def _can_sync(video_hash: str | None, extra: Extra) -> bool:
-    return _valid_hash(video_hash) and bool(extra.filename or extra.video_size is not None)
-
-
 def _remember_video(
-    videos: OrderedDict[str, tuple[VideoId, Extra]], video_hash: str, video: VideoId, extra: Extra
+    videos: OrderedDict[str, tuple[VideoId, Extra]], video_key: str, video: VideoId, extra: Extra
 ) -> None:
     """Keep what a re-timed link needs to start its job. The oldest videos are dropped."""
-    videos[video_hash] = (video, extra)
-    videos.move_to_end(video_hash)
+    videos[video_key] = (video, extra)
+    videos.move_to_end(video_key)
     while len(videos) > MAX_VIDEOS:
         videos.popitem(last=False)
 
 
 def _start_job(
-    request: Request, config: UserConfig, video_hash: str, candidate: Candidate
+    request: Request, config: UserConfig, video_key: str, candidate: Candidate
 ) -> Job | None:
     """Start the sync job of one subtitle. None when it cannot run, so the original is served."""
-    known = request.app.state.videos.get(video_hash)
+    known = request.app.state.videos.get(video_key)
     stages: Stages = request.app.state.stages
     http: httpx.AsyncClient = request.app.state.http
     if known is None or stages.debrid(config, http) is None:
@@ -187,16 +179,16 @@ def _start_job(
         return {} if correction is None else {cands[0]: correction}
 
     jobs: Jobs = request.app.state.jobs
-    jobs.submit(video_hash, [candidate], work)
-    return jobs.get(video_hash, encode_key(candidate))
+    jobs.submit(video_key, [candidate], work)
+    return jobs.get(video_key, encode_key(candidate))
 
 
 def _sync_state(
-    cache: Cache, jobs: Jobs, video_hash: str, key: str
+    cache: Cache, jobs: Jobs, video_key: str, key: str
 ) -> tuple[Correction | None, Job | None]:
     """The correction of a subtitle, from the cache or else from its finished job, and its job."""
-    correction = cache.get_sync(video_hash, key)
-    job = jobs.get(video_hash, key)
+    correction = cache.get_sync(video_key, key)
+    job = jobs.get(video_key, key)
     if correction is None and job is not None and job.state is JobState.DONE:
         correction = job.correction
     return correction, job
@@ -313,21 +305,21 @@ def create_app(
             raise HTTPException(404, "Unknown subtitle") from None
         return await _serve_srt(request, config, source_name, source_id, language)
 
-    @app.get("/{config}/retimed/{video_hash}/{key}.srt")
+    @app.get("/{config}/retimed/{video_key}/{key}.srt")
     async def retimed_file(
-        request: Request, video_hash: str, key: str, config: ConfigDep
+        request: Request, video_key: str, key: str, config: ConfigDep
     ) -> Response:
         try:
             source_name, source_id, language = decode_key(key)
         except ValueError:
             raise HTTPException(404, "Unknown subtitle") from None
-        if not _valid_hash(video_hash):
+        if not valid_video_key(video_key):
             raise HTTPException(404, "Unknown subtitle")
         jobs: Jobs = request.app.state.jobs
-        correction, job = _sync_state(request.app.state.cache, jobs, video_hash, key)
+        correction, job = _sync_state(request.app.state.cache, jobs, video_key, key)
         if correction is None and job is None:
             job = _start_job(
-                request, config, video_hash, Candidate(source_name, source_id, language, "")
+                request, config, video_key, Candidate(source_name, source_id, language, "")
             )
         if (
             correction is None
@@ -344,11 +336,11 @@ def create_app(
             correction = None
         return await _serve_srt(request, config, source_name, source_id, language, correction)
 
-    @app.get("/{config}/status/{video_hash}.json")
-    def status(request: Request, video_hash: str, config: ConfigDep) -> dict:
+    @app.get("/{config}/status/{video_key}.json")
+    def status(request: Request, video_key: str, config: ConfigDep) -> dict:
         jobs: Jobs = request.app.state.jobs
         return {
-            "videoHash": video_hash,
+            "videoHash": video_key,
             "jobs": [
                 {
                     "subtitle": job.subtitle_key,
@@ -359,7 +351,7 @@ def create_app(
                     "offsetMs": job.correction.offset_ms if job.correction else None,
                     "error": job.error,
                 }
-                for job in jobs.for_video(video_hash)
+                for job in jobs.for_video(video_key)
             ],
         }
 
