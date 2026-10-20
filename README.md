@@ -13,6 +13,10 @@ where people speak and shifts and stretches the subtitles to match. It fixes con
 offsets and frame-rate drift (for example 25 fps subtitles on a 23.976 fps file). It does
 not translate or generate subtitles.
 
+Every listed subtitle is a re-timed entry. Pick any of them and that one is re-timed. A short
+"being synced" subtitle shows while it works, so reopen the subtitle menu after a moment. If
+re-timing does not help, you get the original subtitle.
+
 ## Install
 
 1. Run the server and make it reachable over HTTPS; see [docs/running.md](docs/running.md),
