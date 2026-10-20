@@ -1,29 +1,25 @@
 # CueSync
 
-A Stremio addon that re-times subtitles in any language to the audio of the movie you
+A Stremio addon that re-times Vietnamese subtitles to the audio of the movie you
 are playing, so subtitles made for a different release stop drifting.
 
 > Status: early development. See the [milestones](https://github.com/phuongnse/cuesync/milestones).
 
 ## How it works
 
-CueSync fetches subtitles in your languages from OpenSubtitles and SubDL, reads a few
-short audio windows of the exact file you play (through your debrid service), detects
+CueSync fetches Vietnamese subtitles from SubDL, reads a few
+short audio windows of the exact file you play (through your Real-Debrid account), detects
 where people speak and shifts and stretches the subtitles to match. It fixes constant
 offsets and frame-rate drift (for example 25 fps subtitles on a 23.976 fps file). It does
 not translate or generate subtitles.
-
-Without a debrid service, you can turn on an optional torrent fallback that reads the
-audio over BitTorrent instead. It is off by default and meant for self-hosting. See
-[Without a debrid service](docs/running.md#without-a-debrid-service).
 
 ## Install
 
 1. Run the server and make it reachable over HTTPS; see [docs/running.md](docs/running.md),
    which also covers Docker and starting automatically on Windows.
 2. Open `https://<your-host>/configure`.
-3. Fill in the form: your subtitle languages, your subtitle source keys and your debrid
-   service.
+3. Fill in the form: your SubDL API key and your Real-Debrid API key. Without a
+   Real-Debrid key you get the original subtitles and CueSync does not re-time them.
 4. Use the install link, or paste the manifest URL into Stremio's addon search.
 
 The install URL contains your API keys. Keep it private and do not share it.

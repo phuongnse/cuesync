@@ -362,7 +362,7 @@ def test_bad_source_id_raises_before_any_request(source_id):
 
 def test_from_config():
     client = httpx.AsyncClient()
-    assert SubDLSource.from_config(UserConfig(languages=["eng"]), client) is None
-    source = SubDLSource.from_config(UserConfig(languages=["eng"], subdl_api_key=API_KEY), client)
+    assert SubDLSource.from_config(UserConfig(), client) is None
+    source = SubDLSource.from_config(UserConfig(subdl_api_key=API_KEY), client)
     assert source is not None
     assert source.name == "subdl"

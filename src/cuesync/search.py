@@ -16,11 +16,12 @@ import httpx
 from cuesync.cache import Cache
 from cuesync.config import UserConfig
 from cuesync.sources.base import Candidate, SubtitleRequest, SubtitleSource
-from cuesync.sources.opensubtitles import OpenSubtitlesSource
 from cuesync.sources.subdl import SubDLSource
 
 # Stremio gives up on slow subtitle responses, so a slow source is left out.
 SEARCH_BUDGET = 5.0
+# The most subtitles one request lists.
+MAX_SUBTITLES = 5
 EXTENSIONS = frozenset({".mkv", ".mp4", ".avi", ".srt", ".ass", ".ssa", ".vtt", ".sub"})
 TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
@@ -28,12 +29,9 @@ log = logging.getLogger(__name__)
 
 
 def build_sources(config: UserConfig, client: httpx.AsyncClient) -> list[SubtitleSource]:
-    """The sources the user has configured, in the order they are searched."""
-    sources = (
-        OpenSubtitlesSource.from_config(config, client),
-        SubDLSource.from_config(config, client),
-    )
-    return [source for source in sources if source is not None]
+    """The sources the user has configured: SubDL when there is a SubDL key."""
+    source = SubDLSource.from_config(config, client)
+    return [source] if source is not None else []
 
 
 async def gather_candidates(

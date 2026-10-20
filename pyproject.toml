@@ -1,7 +1,7 @@
 [project]
 name = "cuesync"
 version = "0.1.0"
-description = "Stremio addon that re-times subtitles in any language to the movie's audio"
+description = "Stremio addon that re-times Vietnamese subtitles to the movie's audio"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
@@ -17,9 +17,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-torrent = [
-    "libtorrent>=2.0.9",
-]
 dev = [
     "pytest>=8.3",
     "ruff==0.13.3",

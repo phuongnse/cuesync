@@ -21,7 +21,7 @@ PROBE_TIMEOUT_S = 30.0
 FFMPEG = "ffmpeg"
 FFPROBE = "ffprobe"
 
-# Files are tagged with either ISO 639-2 spelling, user settings use OpenSubtitles codes.
+# Files are tagged with either ISO 639-2 spelling.
 _ALIASES = {
     "fre": "fra",
     "ger": "deu",

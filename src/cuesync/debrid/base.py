@@ -1,4 +1,4 @@
-"""The interface every debrid provider implements, and the factory that picks one."""
+"""The interface of a debrid provider, and the factory that builds the Real-Debrid one."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import httpx
 
 from cuesync.config import UserConfig
 from cuesync.debrid.realdebrid import RealDebrid
-from cuesync.debrid.torbox import TorBox
 from cuesync.stream import StreamRef
 
 
@@ -21,9 +20,7 @@ class DebridProvider(Protocol):
 
 
 def debrid_provider(config: UserConfig, client: httpx.AsyncClient) -> DebridProvider | None:
-    """The provider the user configured, or None when there is none or it is not supported."""
-    if config.debrid_provider == "realdebrid" and config.debrid_api_key:
+    """The Real-Debrid client for the user's key, or None when the user has no key."""
+    if config.debrid_api_key:
         return RealDebrid(config.debrid_api_key, client)
-    if config.debrid_provider == "torbox" and config.debrid_api_key:
-        return TorBox(config.debrid_api_key, client)
     return None

@@ -6,15 +6,11 @@ https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/protocol.md
 
 from __future__ import annotations
 
-import asyncio
 import html
-import importlib.util
 import logging
 import os
-import shutil
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
@@ -26,17 +22,15 @@ from fastapi.responses import HTMLResponse, Response
 
 from . import __version__
 from .cache import DEFAULT_MAX_BYTES, Cache
-from .config import InvalidConfig, RedactConfigFilter, UserConfig, decode_config
-from .jobs import JOB_LIMIT, JOB_TIMEOUT, TORRENT_JOB_MARGIN_S, Job, Jobs, JobState
+from .config import LANGUAGE, InvalidConfig, RedactConfigFilter, UserConfig, decode_config
+from .jobs import JOB_LIMIT, JOB_TIMEOUT, Job, Jobs, JobState
 from .placeholder import placeholder_cues
 from .retime import Stages, pick, retime
-from .search import build_sources, decode_key, encode_key, gather_candidates, rank
+from .search import MAX_SUBTITLES, build_sources, decode_key, encode_key, gather_candidates, rank
 from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
 from .stremio import Extra, VideoId, parse_extra, parse_video_id, raw_extra_segment
 from .subtitles import write_srt
 from .sync import Correction, Verdict, apply_correction
-from .torrent import LibtorrentEngine, TorrentReader, torrent_settings
-from .torrent.engine import Engine
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +40,7 @@ MANIFEST = {
     "id": "community.cuesync",
     "version": __version__,
     "name": "CueSync",
-    "description": "Re-times subtitles in any language to the movie's audio.",
+    "description": "Re-times Vietnamese subtitles to the movie's audio.",
     "resources": ["subtitles"],
     "types": ["movie", "series"],
     "idPrefixes": ["tt"],
@@ -125,14 +119,14 @@ async def find_subtitles(
             imdb_id=video.imdb_id,
             season=video.season,
             episode=video.episode,
-            languages=tuple(config.languages),
+            languages=(LANGUAGE,),
             video_hash=extra.video_hash,
             video_size=extra.video_size,
             filename=extra.filename,
         ),
         cache=cache,
     )
-    ranked = rank(candidates, config.languages, extra.filename, config.max_per_language)
+    ranked = rank(candidates, (LANGUAGE,), extra.filename, MAX_SUBTITLES)
     base = f"{base_url(request)}/{request.path_params['config']}"
     entries = []
     video_hash = extra.video_hash
@@ -150,7 +144,7 @@ async def find_subtitles(
             elif job is not None:
                 wanted = job.state in (JobState.PENDING, JobState.RUNNING)
             else:
-                wanted = stages.debrid(config, http) is not None or stages.torrent is not None
+                wanted = stages.debrid(config, http) is not None
                 if wanted:
                     to_start.append(candidate)
             if wanted:
@@ -244,34 +238,15 @@ def create_app(
     job_limit: int = JOB_LIMIT,
     job_timeout: float = JOB_TIMEOUT,
     cache: Cache | None = None,
-    torrent_engine: Engine | None = None,
 ) -> FastAPI:
-    torrent = torrent_settings(os.environ)
     redact_access_log()
     data_dir = Path(os.environ.get("CUESYNC_DATA_DIR") or "data")
     stages = stages or Stages()
-    if not torrent.enabled:
-        stages = replace(stages, torrent=None)
-    else:
-        if stages.torrent is None:
-            if torrent_engine is None and importlib.util.find_spec("libtorrent") is None:
-                raise ValueError(
-                    "CUESYNC_TORRENT_FALLBACK=1 needs libtorrent: pip install 'cuesync[torrent]'"
-                )
-            torrent_engine = torrent_engine or LibtorrentEngine()
-            reader = TorrentReader(torrent_engine, data_dir / "torrents", torrent.limits)
-            stages = replace(stages, torrent=reader.open)
-        stages = replace(stages, torrent_timeout_s=torrent.limits.time_s)
-        job_timeout = max(job_timeout, torrent.limits.time_s + TORRENT_JOB_MARGIN_S)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        # Torrent data is temporary. A crash can leave some behind.
-        shutil.rmtree(data_dir / "torrents", ignore_errors=True)
         yield
         await app.state.jobs.close()
-        if torrent_engine is not None:
-            await asyncio.to_thread(torrent_engine.close)
         await app.state.http.aclose()
         app.state.cache.close()
 
