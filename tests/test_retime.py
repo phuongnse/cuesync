@@ -18,8 +18,8 @@ from cuesync.cache import FAILURE_RETRY_S, Cache
 from cuesync.config import UserConfig, encode_config
 from cuesync.placeholder import MESSAGES
 from cuesync.retime import Stages
-from cuesync.search import decode_key, encode_key
-from cuesync.sources.base import Candidate
+from cuesync.search import decode_key, encode_key, rank
+from cuesync.sources.base import Candidate, SourceError
 from cuesync.stream import StreamRef
 from cuesync.sync import Correction, Verdict
 from test_app import FakeSource, fake_candidate
@@ -177,14 +177,127 @@ def test_picked_entry_serves_the_placeholder_then_the_shifted_srt(make_client):
     assert ids_of(entries_of(client)) == ids_of(entries)
 
 
-def test_only_the_picked_subtitle_is_synced(make_client):
+def test_picked_subtitle_is_downloaded_first_and_every_listed_one_once(make_client):
     source = FakeSource(candidates=[fake_candidate("1", "vie"), fake_candidate("2", "vie")])
     client = make_client(source, FakeStages())
     entries = entries_of(client)
     pick_entry(client, entries[1])
     settle(client)
-    assert [j["subtitle"] for j in status_of(client)["jobs"]] == [entries[1]["id"]]
-    assert [d.source_id for d in source.downloads] == [decode_key(entries[1]["id"])[1]]
+    assert sorted(j["subtitle"] for j in status_of(client)["jobs"]) == sorted(ids_of(entries))
+    picked = decode_key(entries[1]["id"])[1]
+    assert source.downloads[0].source_id == picked
+    assert sorted(d.source_id for d in source.downloads) == ["1", "2"]
+
+
+@pytest.mark.parametrize("path", [SIZED_PATH, PATH])
+def test_job_of_one_pick_aligns_every_listed_subtitle_from_one_audio_read(make_client, path):
+    fake = FakeStages()
+    source = FakeSource(candidates=[fake_candidate(str(i), "vie") for i in (1, 2, 3)])
+    client = make_client(source, fake)
+    entries = entries_of(client, path=path)
+    pick_entry(client, entries[0])
+    settle(client)
+    assert fake.extract_calls == 1
+    assert fake.align_calls == 3
+    assert set(client.app.state.cache.get_syncs("abc")) == set(ids_of(entries))
+    assert {j["state"] for j in status_of(client)["jobs"]} == {"done"}
+
+
+def test_another_listed_subtitle_is_served_shifted_at_once_after_the_job(make_client):
+    fake = FakeStages()
+    source = FakeSource(candidates=[fake_candidate(str(i), "vie") for i in (1, 2, 3)])
+    client = make_client(source, fake)
+    entries = entries_of(client)
+    pick_entry(client, entries[0])
+    settle(client)
+    calls = (fake.stream_calls, fake.extract_calls, fake.align_calls, len(source.downloads))
+    for entry in entries[1:]:
+        response = pick_entry(client, entry)
+        assert MESSAGES["vie"] not in response.content.decode()
+        assert response.content.decode() == SHIFTED
+    assert (fake.stream_calls, fake.extract_calls, fake.align_calls, len(source.downloads)) == calls
+
+
+def test_picked_subtitle_is_served_while_the_others_are_still_being_aligned(make_client):
+    release = threading.Event()
+
+    class SlowOthers(FakeStages):
+        def align(self, windows, cues):
+            first = self.align_calls == 0
+            self.align_calls += 1
+            if not first:
+                release.wait(10)
+            return self.correction
+
+    source = FakeSource(candidates=[fake_candidate("1", "vie"), fake_candidate("2", "vie")])
+    client = make_client(source, SlowOthers())
+    entries = entries_of(client)
+    pick_entry(client, entries[0])
+    try:
+        deadline = time.monotonic() + 5
+        served = pick_entry(client, entries[0]).content.decode()
+        while served != SHIFTED and time.monotonic() < deadline:
+            time.sleep(0.05)
+            served = pick_entry(client, entries[0]).content.decode()
+        assert served == SHIFTED
+        # The other one has no result yet, so it still gets the placeholder and no second job.
+        assert MESSAGES["vie"] in pick_entry(client, entries[1]).content.decode()
+    finally:
+        release.set()
+        settle(client)
+    assert pick_entry(client, entries[1]).content.decode() == SHIFTED
+
+
+def test_other_subtitle_that_cannot_be_downloaded_fails_alone(make_client):
+    class OneBroken(FakeSource):
+        async def download(self, candidate):
+            if candidate.source_id == "2":
+                self.downloads.append(candidate)
+                raise SourceError("quota")
+            return await super().download(candidate)
+
+    source = OneBroken(candidates=[fake_candidate(str(i), "vie") for i in (1, 2, 3)])
+    client = make_client(source, FakeStages())
+    entries = entries_of(client)
+    pick_entry(client, entries[0])
+    settle(client)
+    states = {j["subtitle"]: j["state"] for j in status_of(client)["jobs"]}
+    assert states == {
+        entries[0]["id"]: "done",
+        entries[1]["id"]: "failed",
+        entries[2]["id"]: "done",
+    }
+    assert pick_entry(client, entries[2]).content.decode() == SHIFTED
+    assert pick_entry(client, entries[1]).status_code == 502
+
+
+def test_listing_without_stored_results_keeps_the_name_order(make_client):
+    candidates = [
+        fake_candidate("1", "vie", release_name="other", downloads=1),
+        fake_candidate("2", "vie", release_name="a.mkv", downloads=2),
+        fake_candidate("3", "vie", release_name="another", downloads=3),
+    ]
+    client = make_client(FakeSource(candidates=candidates), FakeStages())
+    expected = [encode_key(c) for c in rank(candidates, ("vie",), "a.mkv", 5)]
+    assert ids_of(entries_of(client)) == expected
+    assert ids_of(entries_of(client, path=SIZED_PATH)) == expected
+
+
+def test_listing_orders_measured_subtitles_by_confidence_then_unmeasured_then_failed(
+    make_client, tmp_path
+):
+    candidates = [fake_candidate(str(i), "vie", downloads=10 - i) for i in range(1, 6)]
+    cache = Cache(tmp_path)
+    for source_id, correction in {
+        "1": FAILED,
+        "2": Correction(Verdict.SYNCED, 1.0, 2000, 5, 10.0, 9.0),
+        "4": Correction(Verdict.UNCHANGED, 1.0, 0, 5, 1.0, 12.0),
+        "5": Correction(Verdict.SYNCED, 1.0, 500, 5, 10.0, 5.0),
+    }.items():
+        cache.put_sync("abc", encode_key(candidates[int(source_id) - 1]), correction)
+    client = make_client(FakeSource(candidates=candidates), FakeStages(), cache)
+    order = [decode_key(i)[1] for i in ids_of(entries_of(client))]
+    assert order == ["4", "2", "5", "3", "1"]
 
 
 def test_original_is_served_from_the_cache_after_retiming(make_client):
@@ -456,6 +569,7 @@ def test_status_lists_the_job_with_its_correction(make_client):
                 "verdict": "synced",
                 "scale": 1.0,
                 "offsetMs": 2000,
+                "confidence": 0.0,
                 "error": None,
             }
         ],

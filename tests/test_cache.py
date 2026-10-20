@@ -29,6 +29,7 @@ CANDIDATES = [
 CUES = (Cue(1000, 2500, "Xin chào"), Cue(3000, 4000, "Two\nlines"))
 SYNCED = Correction(Verdict.SYNCED, 25 / 24, 2000, 5, 10.5)
 FAILED = Correction(Verdict.FAILED, 1.0, 0, 1, 0.0)
+CONFIDENT = Correction(Verdict.SYNCED, 1.0, 2000, 5, 10.0, 7.25)
 
 
 @pytest.fixture
@@ -124,6 +125,43 @@ def test_sync_results_of_an_older_engine_are_dropped_but_timelines_stay(tmp_path
     assert stored is not None
     assert [start for start, _ in stored] == [60.0]
     second.close()
+
+
+def test_old_sync_table_without_confidence_is_replaced(tmp_path):
+    db = sqlite3.connect(tmp_path / "cuesync.sqlite3")
+    db.execute(
+        "CREATE TABLE sync (video_hash TEXT, subtitle_key TEXT, verdict TEXT, scale REAL, "
+        "offset_ms INTEGER, agreeing INTEGER, residual_ms REAL, retry_after REAL, "
+        "PRIMARY KEY (video_hash, subtitle_key))"
+    )
+    db.execute("INSERT INTO sync VALUES ('abc', 'k', 'synced', 1.0, 2000, 5, 10.0, NULL)")
+    db.execute("PRAGMA user_version = 2")
+    db.close()
+    second = Cache(tmp_path)
+    assert second.get_sync("abc", "k") is None
+    second.put_sync("abc", "k", CONFIDENT)
+    second.close()
+    third = Cache(tmp_path)
+    assert third.get_sync("abc", "k") == CONFIDENT
+    third.close()
+
+
+def test_confidence_is_stored_and_returned_unchanged(cache):
+    cache.put_sync("abc", "k", CONFIDENT)
+    stored = cache.get_sync("abc", "k")
+    assert stored == CONFIDENT
+    assert stored.confidence == 7.25
+
+
+def test_all_results_of_a_video_are_returned_without_an_expired_failure(cache, now):
+    cache.put_sync("abc", "one", CONFIDENT)
+    cache.put_sync("abc", "two", SYNCED)
+    cache.put_sync("abc", "failed", FAILED)
+    cache.put_sync("zzz", "other", SYNCED)
+    assert cache.get_syncs("abc") == {"one": CONFIDENT, "two": SYNCED, "failed": FAILED}
+    assert cache.get_syncs("none") == {}
+    now[0] += FAILURE_RETRY_S
+    assert cache.get_syncs("abc") == {"one": CONFIDENT, "two": SYNCED}
 
 
 def test_sync_result_of_the_current_engine_survives_reopening(tmp_path):

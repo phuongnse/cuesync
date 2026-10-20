@@ -3,6 +3,9 @@
 The stages run in order: stream lookup, Real-Debrid link, audio windows and sync. Every stage
 is injectable so tests can fake it. A subtitle that could not be aligned gives no result, so the
 caller falls back to the original. The Real-Debrid link is a secret and is never logged.
+
+The picked subtitle is aligned and stored first. Then the other subtitles of the listing are
+aligned against the same speech timeline, so the audio is never read again for them.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import numpy as np
 
 from cuesync import audio
 from cuesync.audio import AudioError, AudioWindow, MediaInfo, select_audio_track
-from cuesync.cache import Cache
+from cuesync.cache import Cache, Timeline
 from cuesync.config import UserConfig
 from cuesync.debrid import DebridProvider, debrid_provider
 from cuesync.search import encode_key
@@ -98,6 +101,38 @@ async def _no_audio() -> None:
     return None
 
 
+def _ignore(candidate: Candidate, correction: Correction | None) -> None:
+    """The default `on_result`: nothing listens."""
+
+
+async def _align_others(
+    stages: Stages,
+    cache: Cache,
+    sources: Sequence[SubtitleSource],
+    vkey: str | None,
+    timelines: Timeline,
+    others: Sequence[Candidate],
+    on_result: Callable[[Candidate, Correction | None], None],
+) -> None:
+    """Align the other subtitles one at a time, so each is ready as soon as it is aligned.
+
+    The audio is never read here. A subtitle that cannot be downloaded reports None.
+    """
+    for other in others:
+        stored = cache.get_sync(vkey, encode_key(other)) if vkey else None
+        if stored is not None:
+            on_result(other, stored)
+            continue
+        downloaded = await _download_all(cache, sources, [other])
+        if not downloaded:
+            on_result(other, None)
+            continue
+        correction = await asyncio.to_thread(stages.align, timelines, downloaded[0][1])
+        if vkey:
+            cache.put_sync(vkey, encode_key(other), correction)
+        on_result(other, correction)
+
+
 async def retime(
     stages: Stages,
     sources: Sequence[SubtitleSource],
@@ -108,6 +143,8 @@ async def retime(
     candidate: Candidate,
     *,
     cache: Cache,
+    others: Sequence[Candidate] = (),
+    on_result: Callable[[Candidate, Correction | None], None] = _ignore,
 ) -> Correction | None:
     """Re-time one subtitle and return the correction found for it.
 
@@ -116,6 +153,10 @@ async def retime(
 
     A result already in the cache is reused. The stream lookup and audio read are skipped when
     the cache has the file's speech timeline.
+
+    Once the file's speech timeline is known, the picked subtitle is aligned and stored, and
+    `on_result` is told at once. Then each of the `others` is aligned from the same timeline and
+    reported the same way. `on_result` gets None for a subtitle that could not be aligned.
     """
     if extra.filename is None and extra.video_size is None:
         return None
@@ -124,6 +165,7 @@ async def retime(
     if vkey:
         stored = cache.get_sync(vkey, key)
         if stored is not None:
+            on_result(candidate, stored)
             return stored
 
     # A derived key already includes the size, so only a hash needs a size to be cacheable.
@@ -144,9 +186,15 @@ async def retime(
         timelines = fresh
         if cacheable:
             cache.put_timeline(vkey, size, fresh)
-    if timelines is None or not downloaded:
+    if timelines is None:
         return None
-    correction = await asyncio.to_thread(stages.align, timelines, downloaded[0][1])
-    if vkey:
-        cache.put_sync(vkey, key, correction)
+    if not downloaded:
+        on_result(candidate, None)
+        correction = None
+    else:
+        correction = await asyncio.to_thread(stages.align, timelines, downloaded[0][1])
+        if vkey:
+            cache.put_sync(vkey, key, correction)
+        on_result(candidate, correction)
+    await _align_others(stages, cache, sources, vkey, timelines, others, on_result)
     return correction

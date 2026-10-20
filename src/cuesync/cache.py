@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS search (
     key TEXT PRIMARY KEY, candidates TEXT NOT NULL, expires_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS sync (
     video_hash TEXT, subtitle_key TEXT, verdict TEXT, scale REAL, offset_ms INTEGER,
-    agreeing INTEGER, residual_ms REAL, retry_after REAL,
+    agreeing INTEGER, residual_ms REAL, confidence REAL, retry_after REAL,
     PRIMARY KEY (video_hash, subtitle_key));
 CREATE TABLE IF NOT EXISTS files (
     key TEXT PRIMARY KEY, name TEXT NOT NULL, size INTEGER NOT NULL, used INTEGER NOT NULL);
@@ -97,10 +97,11 @@ class Cache:
             db = sqlite3.connect(
                 self._data_dir / "cuesync.sqlite3", check_same_thread=False, isolation_level=None
             )
-            db.executescript(_SCHEMA)
+            # The sync table is dropped and not just emptied, so a new layout replaces the old.
             if db.execute("PRAGMA user_version").fetchone()[0] != ENGINE_VERSION:
-                db.execute("DELETE FROM sync")
+                db.execute("DROP TABLE IF EXISTS sync")
                 db.execute(f"PRAGMA user_version = {int(ENGINE_VERSION)}")
+            db.executescript(_SCHEMA)
             self._db = db
         return self._db
 
@@ -249,19 +250,39 @@ class Cache:
         with self._lock:
             db = self._connect()
             row = db.execute(
-                "SELECT verdict, scale, offset_ms, agreeing, residual_ms, retry_after "
+                "SELECT verdict, scale, offset_ms, agreeing, residual_ms, confidence, retry_after "
                 "FROM sync WHERE video_hash = ? AND subtitle_key = ?",
                 (video_hash, subtitle_key),
             ).fetchone()
             if row is None:
                 return None
-            if row[5] is not None and row[5] <= self._clock():
+            if row[6] is not None and row[6] <= self._clock():
                 db.execute(
                     "DELETE FROM sync WHERE video_hash = ? AND subtitle_key = ?",
                     (video_hash, subtitle_key),
                 )
                 return None
-        return Correction(Verdict(row[0]), row[1], row[2], row[3], row[4])
+        return Correction(Verdict(row[0]), row[1], row[2], row[3], row[4], row[5])
+
+    @_guarded
+    def get_syncs(self, video_hash: str) -> dict[str, Correction] | None:
+        """All the live results of one video by subtitle key. A failure to retry is left out."""
+        with self._lock:
+            rows = (
+                self._connect()
+                .execute(
+                    "SELECT subtitle_key, verdict, scale, offset_ms, agreeing, residual_ms, "
+                    "confidence, retry_after FROM sync WHERE video_hash = ?",
+                    (video_hash,),
+                )
+                .fetchall()
+            )
+        now = self._clock()
+        return {
+            row[0]: Correction(Verdict(row[1]), row[2], row[3], row[4], row[5], row[6])
+            for row in rows
+            if row[7] is None or row[7] > now
+        }
 
     @_guarded
     def put_sync(self, video_hash: str, subtitle_key: str, correction: Correction) -> None:
@@ -269,7 +290,8 @@ class Cache:
         with self._lock:
             self._connect().execute(
                 "INSERT OR REPLACE INTO sync (video_hash, subtitle_key, verdict, scale, "
-                "offset_ms, agreeing, residual_ms, retry_after) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "offset_ms, agreeing, residual_ms, confidence, retry_after) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     video_hash,
                     subtitle_key,
@@ -278,6 +300,7 @@ class Cache:
                     correction.offset_ms,
                     correction.agreeing,
                     correction.residual_ms,
+                    correction.confidence,
                     self._clock() + FAILURE_RETRY_S if failed else None,
                 ),
             )

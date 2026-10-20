@@ -22,7 +22,7 @@ RATIOS = (1.0, 25 / NTSC, NTSC / 25, 24 / NTSC, NTSC / 24, 25 / 24, 24 / 25)
 MIN_WINDOWS = 3  # windows with enough speech, or one cannot tell a different cut from a match
 COMBINED_PEAK_RATIO = 2.0  # the combined peak's gain over the next best peak's
 COMBINED_SIGMAS = 4.0  # the combined peak's gain over the median, in standard deviations
-ENGINE_VERSION = 2  # bump when a change makes stored sync results stale
+ENGINE_VERSION = 3  # bump when a change makes stored sync results stale
 UNCHANGED_MS = 100  # a shift this small is not worth a re-timed copy
 
 
@@ -39,6 +39,7 @@ class Correction:
     offset_ms: int  # b
     agreeing: int  # windows in the combined curve
     residual_ms: float  # mean |own best shift - chosen shift| over those windows
+    confidence: float = 0.0  # the winning peak's gain over the median, in standard deviations
 
 
 def _failed() -> Correction:
@@ -87,7 +88,7 @@ def align(
         verdict = (
             Verdict.UNCHANGED if a == 1.0 and abs(offset_ms) <= UNCHANGED_MS else Verdict.SYNCED
         )
-        best = Correction(verdict, a, offset_ms, len(curves), residual_ms)
+        best = Correction(verdict, a, offset_ms, len(curves), residual_ms, peak.sigmas)
         best_sigmas = peak.sigmas
     return best
 

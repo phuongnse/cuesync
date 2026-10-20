@@ -25,6 +25,7 @@ from cuesync.sync import (
     estimate_offset,
     subtitle_speech,
 )
+from cuesync.sync.correction import COMBINED_SIGMAS
 
 FPS = 100
 NTSC = 24000 / 1001
@@ -123,6 +124,18 @@ def test_align_finds_each_ratio(a: float) -> None:
     assert result.verdict is Verdict.SYNCED
     assert result.scale == pytest.approx(a)
     assert abs(result.offset_ms - 1000) <= 50
+
+
+def test_align_reports_the_winning_peaks_strength_as_its_confidence() -> None:
+    full, cues, starts = blocky_case(11, 25 / NTSC, 1000)
+    result = align(make_windows(full, starts, 120), cues)
+    assert result.verdict is Verdict.SYNCED
+    assert result.confidence > COMBINED_SIGMAS
+    other = align(
+        make_windows(full, starts, 120), [Cue(c.start_ms + 7, c.end_ms, "x") for c in cues]
+    )
+    assert other.confidence != result.confidence
+    assert align(make_windows(full, starts, 120)[:2], cues).confidence == 0.0
 
 
 def test_align_small_shift_is_unchanged() -> None:
