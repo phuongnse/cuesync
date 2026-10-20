@@ -200,3 +200,61 @@ def test_placeholder_is_one_long_cue_in_the_language():
 def test_placeholder_falls_back_to_english():
     assert placeholder_cues("kor")[0].text == MESSAGES["eng"]
     assert "Reopen the subtitle menu" in MESSAGES["eng"]
+
+
+def test_finish_marks_a_job_done_while_its_work_is_still_running():
+    async def main():
+        jobs = Jobs()
+        release = asyncio.Event()
+
+        async def work(candidates):
+            jobs.finish("abc", encode_key(ONE), SYNCED)
+            jobs.finish("abc", encode_key(ONE), None)
+            jobs.finish("abc", "unknown", SYNCED)
+            await release.wait()
+            return {}
+
+        jobs.submit("abc", [ONE, TWO], work)
+        await asyncio.sleep(0.01)
+        one, two = jobs.get("abc", encode_key(ONE)), jobs.get("abc", encode_key(TWO))
+        early = (one.state, one.correction, one.finished_at is not None, two.state)
+        release.set()
+        await jobs.join()
+        return early, one, two
+
+    early, one, two = asyncio.run(main())
+    assert early == (JobState.DONE, SYNCED, True, JobState.RUNNING)
+    assert (one.state, one.correction, one.error) == (JobState.DONE, SYNCED, None)
+    assert (two.state, two.error) == (JobState.FAILED, "unavailable")
+
+
+def test_finish_reports_a_missing_result_as_unavailable():
+    async def work(candidates):
+        jobs.finish("abc", encode_key(ONE), None)
+        return {ONE: SYNCED}
+
+    async def main():
+        jobs.submit("abc", [ONE], work)
+        await jobs.join()
+
+    jobs = Jobs()
+    asyncio.run(main())
+    job = jobs.get("abc", encode_key(ONE))
+    assert (job.state, job.error, job.correction) == (JobState.FAILED, "unavailable", None)
+
+
+def test_a_timeout_leaves_a_finished_job_alone_and_fails_the_rest():
+    async def work(candidates):
+        jobs.finish("abc", encode_key(ONE), SYNCED)
+        await asyncio.sleep(5)
+        return {}
+
+    async def main():
+        jobs.submit("abc", [ONE, TWO], work)
+        await jobs.join()
+
+    jobs = Jobs(timeout=0.05)
+    asyncio.run(main())
+    one, two = jobs.get("abc", encode_key(ONE)), jobs.get("abc", encode_key(TWO))
+    assert (one.state, one.correction, one.error) == (JobState.DONE, SYNCED, None)
+    assert (two.state, two.error) == (JobState.FAILED, "timeout")

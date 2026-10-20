@@ -32,19 +32,26 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle.
    For each ratio the per-window agreement curves are summed, weighted by window length. The
    combined peak gives the shift `b` in `t' = a·t + b`, and the ratio `a` with the strongest
-   peak wins. A weak or ambiguous peak, or fewer than three usable windows, means failed.
+   peak wins. A weak or ambiguous peak, or fewer than three usable windows, means failed. The
+   winning peak's gain over the median, in standard deviations, is the result's confidence.
 6. The subtitles list returns at once, without waiting for steps 3 to 5. When the request can
    be synced (it has a filename or size), every subtitle is listed once, as a
-   re-timed entry. Listing starts no job. Picking an entry fetches its URL, which starts a
-   background job for that one subtitle (one per video key and subtitle, at most two at a
-   time, five minutes each) running steps 3 to 5. The video key is the video hash, or a digest
+   re-timed entry. Listing starts no job and aligns nothing. It only reads stored results, and
+   with stored results for the video it orders the entries: `synced` and `unchanged` by
+   confidence (highest first), then the ones not measured yet in the usual order, then `failed`.
+   The list is remembered with the video. Picking an entry fetches its URL, which starts a
+   background job for it (one per video key and subtitle, at most two at a time, five minutes
+   each) running steps 3 to 5. The video key is the video hash, or a digest
    of filename and size when there is no valid hash, so a URL never shows the filename. Until
-   it finishes, the URL serves a short "being synced, reopen the menu" subtitle. Afterwards the
-   same URL serves the re-timed file when the result is a sync, and the original subtitle
-   otherwise (also for a user with no Real-Debrid key). The speech timeline is cached by video key and size, so a second subtitle
-   picked for the same file skips steps 3 and 4. A failed job is remembered for ten minutes.
-   Stored sync results are dropped when the sync engine version changes, while speech timelines
-   stay.
+   it finishes, the URL serves a short "being synced, reopen the menu" subtitle. The job stores
+   the picked subtitle's result first, and the picked URL serves it from then on. The same job
+   then aligns the other subtitles of the latest listing that have no stored result, one at a
+   time, from the same speech timeline and without reading the audio again. Each of them is
+   served as soon as its result is stored. A URL serves the re-timed file when the result is a
+   sync, and the original subtitle otherwise (also for a user with no Real-Debrid key). The
+   speech timeline is cached by video key and size, so a later job for the same file skips
+   steps 3 and 4. A failed job is remembered for ten minutes. Stored sync results are dropped
+   when the sync engine version changes, while speech timelines stay.
    A request that cannot be synced lists the original subtitles. `/{config}/status/{videoKey}.json`
    lists the jobs for debugging.
 
@@ -61,7 +68,7 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
 - `src/cuesync/debrid/`: the `DebridProvider` protocol and the Real-Debrid client that turns a `StreamRef` into a direct HTTPS link.
 - `src/cuesync/stream/`: the stream lookup that finds the torrent and file behind the played video (Torrentio).
 - `src/cuesync/cache.py`: the SQLite plus files cache of searches, subtitles, speech timelines and sync results.
-- `src/cuesync/retime.py`: runs stream lookup, Real-Debrid link, audio windows and sync for one subtitle and returns its correction.
+- `src/cuesync/retime.py`: runs stream lookup, Real-Debrid link, audio windows and sync for the picked subtitle, then aligns the listing's other subtitles from the same speech timeline, and returns the picked correction.
 - `src/cuesync/jobs.py`: the in-memory background sync jobs, deduplicated, limited in number and time.
 - `src/cuesync/placeholder.py`: the "being synced" subtitle served while a job runs.
 - `src/cuesync/sync/`: speech timelines at 100 Hz from audio (WebRTC VAD) and from subtitle cues, per-window agreement curves by FFT cross-correlation and their weighted sum, and the global correction (frame-rate ratio and shift) with its verdict.

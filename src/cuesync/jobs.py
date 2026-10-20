@@ -2,7 +2,9 @@
 
 Fetching a re-timed subtitle starts a job and returns at once. The job runs the slow work
 (stream lookup, audio reads, alignment) in the background, so Stremio is never kept waiting.
-Jobs live in memory only. A restart drops them and the next fetch starts them again.
+A job's task may cover more than one subtitle, and each job is finished as soon as its own
+result is known. Jobs live in memory only. A restart drops them and the next fetch starts them
+again.
 """
 
 from __future__ import annotations
@@ -124,23 +126,31 @@ class Jobs:
                 self._fail(jobs, type(exc).__name__)
                 log.warning("sync job failed: %s", type(exc).__name__)
             else:
-                finished_at = self._clock()
                 for candidate, job in zip(candidates, jobs, strict=True):
-                    correction = result.get(candidate)
-                    if correction is None:
-                        job.state = JobState.FAILED
-                        job.error = "unavailable"
-                    else:
-                        job.state = JobState.DONE
-                        job.correction = correction
-                    job.finished_at = finished_at
+                    if job.finished_at is None:
+                        self._finish(job, result.get(candidate))
+
+    def finish(self, video_key: str, key: str, correction: Correction | None) -> None:
+        """Finish one job before its task ends. Unknown and finished jobs are left alone."""
+        job = self._jobs.get((video_key, key))
+        if job is not None and job.finished_at is None:
+            self._finish(job, correction)
+
+    def _finish(self, job: Job, correction: Correction | None) -> None:
+        if correction is None:
+            job.state = JobState.FAILED
+            job.error = "unavailable"
+        else:
+            job.state = JobState.DONE
+            job.correction = correction
+        job.finished_at = self._clock()
 
     def _fail(self, jobs: list[Job], error: str) -> None:
-        finished_at = self._clock()
         for job in jobs:
-            job.state = JobState.FAILED
-            job.error = error
-            job.finished_at = finished_at
+            if job.finished_at is None:
+                job.state = JobState.FAILED
+                job.error = error
+                job.finished_at = self._clock()
 
     async def join(self) -> None:
         """Wait for the running tasks to finish. For tests."""

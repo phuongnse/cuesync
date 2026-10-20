@@ -14,10 +14,15 @@ offsets and frame-rate drift (for example 25 fps subtitles on a 23.976 fps file)
 not translate or generate subtitles. The shift comes from all the audio windows together, and
 a subtitle for a different cut keeps its original timing.
 
-Every listed subtitle is a re-timed entry. Pick any of them and that one is re-timed. A short
+Every listed subtitle is a re-timed entry. Pick any of them and it is re-timed. A short
 "being synced" subtitle shows while it works, so reopen the subtitle menu after a moment. If
 re-timing does not help, you get the original subtitle. Entries are re-timed even when Stremio
 has not yet sent the file's hash, as long as it sends the filename or size.
+
+While it works on the one you picked, CueSync also re-times the file's other listed subtitles
+from the same audio, so picking another one afterwards is instant. The next time you open the
+same file, the list is ordered by how well each subtitle fits the audio, best first. Subtitles
+not measured yet follow, and the ones that could not be re-timed come last.
 
 ## Install
 

@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import httpx
 
@@ -17,6 +17,7 @@ from cuesync.cache import Cache
 from cuesync.config import UserConfig
 from cuesync.sources.base import Candidate, SubtitleRequest, SubtitleSource
 from cuesync.sources.subdl import SubDLSource
+from cuesync.sync import Correction, Verdict
 
 # Stremio gives up on slow subtitle responses, so a slow source is left out.
 SEARCH_BUDGET = 5.0
@@ -119,6 +120,25 @@ def rank(
         )
         ranked.extend(group[:limit])
     return ranked
+
+
+def order_by_fit(
+    candidates: Sequence[Candidate], results: Mapping[str, Correction]
+) -> list[Candidate]:
+    """Put the subtitles measured against the audio first, the best fit first.
+
+    Then come the ones not measured yet, in their given order, and the failed ones last.
+    """
+
+    def order(candidate: Candidate) -> tuple[int, float]:
+        result = results.get(encode_key(candidate))
+        if result is None:
+            return (1, 0.0)
+        if result.verdict is Verdict.FAILED:
+            return (2, 0.0)
+        return (0, -result.confidence)
+
+    return sorted(candidates, key=order)
 
 
 def encode_key(candidate: Candidate) -> str:

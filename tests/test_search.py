@@ -13,11 +13,13 @@ from cuesync.search import (
     decode_key,
     encode_key,
     gather_candidates,
+    order_by_fit,
     rank,
     similarity,
 )
 from cuesync.sources import Candidate, SubtitleRequest
 from cuesync.subtitles import Subtitle
+from cuesync.sync import Correction, Verdict
 
 REQUEST = SubtitleRequest(
     imdb_id="tt1375666", season=None, episode=None, languages=("eng",), filename="a.mkv"
@@ -173,3 +175,16 @@ def b64(text: str) -> str:
 def test_decode_key_rejects_garbage(key):
     with pytest.raises(ValueError):
         decode_key(key)
+
+
+def test_order_by_fit_puts_measured_first_by_confidence_then_unmeasured_then_failed():
+    subs = [Candidate("fake", str(i), "vie", "") for i in range(1, 7)]
+    results = {
+        encode_key(subs[0]): Correction(Verdict.FAILED, 1.0, 0, 0, 0.0),
+        encode_key(subs[1]): Correction(Verdict.SYNCED, 1.0, 900, 5, 1.0, 6.0),
+        encode_key(subs[3]): Correction(Verdict.UNCHANGED, 1.0, 0, 5, 1.0, 8.0),
+        encode_key(subs[5]): Correction(Verdict.SYNCED, 1.0, 900, 5, 1.0, 5.0),
+    }
+    ordered = order_by_fit(subs, results)
+    assert [c.source_id for c in ordered] == ["4", "2", "6", "3", "5", "1"]
+    assert order_by_fit(subs, {}) == subs

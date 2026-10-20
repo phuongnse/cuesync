@@ -27,7 +27,15 @@ from .config import LANGUAGE, InvalidConfig, RedactConfigFilter, UserConfig, dec
 from .jobs import JOB_LIMIT, JOB_TIMEOUT, Job, Jobs, JobState
 from .placeholder import placeholder_cues
 from .retime import Stages, retime
-from .search import MAX_SUBTITLES, build_sources, decode_key, encode_key, gather_candidates, rank
+from .search import (
+    MAX_SUBTITLES,
+    build_sources,
+    decode_key,
+    encode_key,
+    gather_candidates,
+    order_by_fit,
+    rank,
+)
 from .sources.base import Candidate, SourceError, SubtitleRequest, SubtitleSource
 from .stremio import (
     Extra,
@@ -140,7 +148,9 @@ async def find_subtitles(
     base = f"{base_url(request)}/{request.path_params['config']}"
     vkey = video_key(extra)
     if vkey:
-        _remember_video(request.app.state.videos, vkey, video, extra)
+        # Measured subtitles come first. This only reads stored results and aligns nothing.
+        ranked = order_by_fit(ranked, cache.get_syncs(vkey) or {})
+        _remember_video(request.app.state.videos, vkey, video, extra, ranked)
     entries = []
     for candidate in ranked:
         sub_key = encode_key(candidate)
@@ -150,10 +160,17 @@ async def find_subtitles(
 
 
 def _remember_video(
-    videos: OrderedDict[str, tuple[VideoId, Extra]], video_key: str, video: VideoId, extra: Extra
+    videos: OrderedDict[str, tuple[VideoId, Extra, tuple[Candidate, ...]]],
+    video_key: str,
+    video: VideoId,
+    extra: Extra,
+    listed: Sequence[Candidate],
 ) -> None:
-    """Keep what a re-timed link needs to start its job. The oldest videos are dropped."""
-    videos[video_key] = (video, extra)
+    """Keep what a re-timed link needs to start its job, and the subtitles listed with it.
+
+    The oldest videos are dropped.
+    """
+    videos[video_key] = (video, extra, tuple(listed))
     videos.move_to_end(video_key)
     while len(videos) > MAX_VIDEOS:
         videos.popitem(last=False)
@@ -168,19 +185,36 @@ def _start_job(
     http: httpx.AsyncClient = request.app.state.http
     if known is None or stages.debrid(config, http) is None:
         return None
-    video, extra = known
+    video, extra, listed = known
     cache: Cache = request.app.state.cache
     sources = request.app.state.sources(config, http)
+    jobs: Jobs = request.app.state.jobs
+    key = encode_key(candidate)
+    # The other listed subtitles are aligned in the same job, from the same speech timeline.
+    others = [
+        other
+        for other in listed
+        if encode_key(other) != key and cache.get_sync(video_key, encode_key(other)) is None
+    ]
 
     async def work(cands: list[Candidate]) -> dict[Candidate, Correction]:
-        correction = await retime(
-            stages, sources, http, config, video, extra, cands[0], cache=cache
+        # `cands[0]` is the picked subtitle. Each result finishes its job as soon as it is known.
+        await retime(
+            stages,
+            sources,
+            http,
+            config,
+            video,
+            extra,
+            cands[0],
+            cache=cache,
+            others=cands[1:],
+            on_result=lambda c, correction: jobs.finish(video_key, encode_key(c), correction),
         )
-        return {} if correction is None else {cands[0]: correction}
+        return {}
 
-    jobs: Jobs = request.app.state.jobs
-    jobs.submit(video_key, [candidate], work)
-    return jobs.get(video_key, encode_key(candidate))
+    jobs.submit(video_key, [candidate, *others], work)
+    return jobs.get(video_key, key)
 
 
 def _sync_state(
@@ -349,6 +383,7 @@ def create_app(
                     "verdict": job.correction.verdict.value if job.correction else None,
                     "scale": job.correction.scale if job.correction else None,
                     "offsetMs": job.correction.offset_ms if job.correction else None,
+                    "confidence": job.correction.confidence if job.correction else None,
                     "error": job.error,
                 }
                 for job in jobs.for_video(video_key)
