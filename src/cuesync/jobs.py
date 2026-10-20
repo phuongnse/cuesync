@@ -18,13 +18,10 @@ from cuesync.search import encode_key
 from cuesync.sources.base import Candidate
 from cuesync.sync import Correction
 
-# Each job reads audio from the user's debrid link or torrent, so only a few run at once.
+# Each job reads audio from the user's Real-Debrid link, so only a few run at once.
 JOB_LIMIT = 2
 # A job that takes longer counts as failed.
 JOB_TIMEOUT = 300.0
-# Added to the torrent time limit when the torrent fallback is on. It covers the stream lookup,
-# the subtitle downloads, the torrent removal and the alignment that run around the torrent read.
-TORRENT_JOB_MARGIN_S = 120.0
 # A failed or finished job is remembered this long. A failure blocks a new try meanwhile.
 FINISHED_TTL_S = 600
 

@@ -89,8 +89,8 @@ def test_starts_with_documented_environment(tmp_path):
         assert health.json() == {"status": "ok"}
         assert url in httpx.get(f"{base}/configure").text
         # The cache opens on first use. A config without sources makes no network call.
-        token = encode_config(UserConfig(languages=["eng"]))
-        key = encode_key(Candidate("subdl", "1", "eng", ""))
+        token = encode_config(UserConfig())
+        key = encode_key(Candidate("subdl", "1", "vie", ""))
         assert httpx.get(f"{base}/{token}/sub/{key}.srt").status_code == 404
     assert (data / "files").is_dir()
 

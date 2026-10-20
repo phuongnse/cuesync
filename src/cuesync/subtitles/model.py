@@ -19,8 +19,8 @@ class Subtitle:
     """A parsed subtitle file and where it came from."""
 
     cues: tuple[Cue, ...]
-    language: str  # 3-letter code, as in UserConfig.languages
-    source: str  # e.g. "opensubtitles", "subdl"
+    language: str  # 3-letter code
+    source: str  # e.g. "subdl"
     source_id: str
     release_name: str
     hash_match: bool = False

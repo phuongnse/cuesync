@@ -144,9 +144,9 @@ def test_failing_source_is_skipped(caplog):
 
 
 def test_key_round_trip():
-    candidate = cand("123", "pob", source="opensubtitles")
+    candidate = cand("123", "vie", source="subdl")
     key = encode_key(candidate)
-    assert decode_key(key) == ("opensubtitles", "123", "pob")
+    assert decode_key(key) == ("subdl", "123", "vie")
     assert "=" not in key
     assert all(ch.isalnum() or ch in "-_" for ch in key)
 

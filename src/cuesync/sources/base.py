@@ -15,7 +15,7 @@ class SubtitleRequest:
     imdb_id: str  # "tt0903747"
     season: int | None
     episode: int | None
-    languages: tuple[str, ...]  # 3-letter, as UserConfig.languages
+    languages: tuple[str, ...]  # 3-letter
     video_hash: str | None = None
     video_size: int | None = None
     filename: str | None = None

@@ -23,7 +23,7 @@ def no_sources(config, client):
 client = TestClient(create_app(source_factory=no_sources))
 
 API_KEY = "super-secret-subdl-key"
-TOKEN = encode_config(UserConfig(languages=["vie", "eng"], subdl_api_key=API_KEY))
+TOKEN = encode_config(UserConfig(subdl_api_key=API_KEY))
 BAD_TOKEN = "bad-" + TOKEN
 
 
@@ -225,28 +225,32 @@ def fake_client(source: FakeSource) -> TestClient:
     return TestClient(create_app(source_factory=lambda config, http: [source]))
 
 
-def fake_candidate(source_id: str, language: str = "eng", **kwargs) -> Candidate:
+def fake_candidate(source_id: str, language: str = "vie", **kwargs) -> Candidate:
     return Candidate("fake", source_id, language, kwargs.pop("release_name", ""), **kwargs)
 
 
-def test_subtitles_list_entries_link_to_srt_files():
+def test_subtitles_list_only_vietnamese_entries_that_link_to_srt_files():
     source = FakeSource(
-        candidates=[fake_candidate("1", "eng"), fake_candidate("2", "vie", hash_match=True)]
+        candidates=[
+            fake_candidate("1", "eng", hash_match=True),
+            fake_candidate("2", "vie"),
+            fake_candidate("3", "vie", hash_match=True),
+        ]
     )
     response = fake_client(source).get(
         f"/{TOKEN}/subtitles/movie/tt1375666/videoHash=abc&filename=a.mkv.json"
     )
     assert response.status_code == 200
     entries = response.json()["subtitles"]
-    # The user's language order decides the order of the list.
-    assert [entry["lang"] for entry in entries] == ["vie", "eng"]
+    # Only Vietnamese is listed, even when the source also returns other languages.
+    assert [entry["lang"] for entry in entries] == ["vie", "vie"]
     for entry in entries:
         assert set(entry) == {"id", "url", "lang"}
         assert entry["url"] == f"http://testserver/{TOKEN}/sub/{entry['id']}.srt"
-    assert decode_key(entries[0]["id"]) == ("fake", "2", "vie")
+    assert decode_key(entries[0]["id"]) == ("fake", "3", "vie")
     (search,) = source.searches
     assert search.imdb_id == "tt1375666"
-    assert search.languages == ("vie", "eng")
+    assert search.languages == ("vie",)
     assert search.video_hash == "abc"
     assert search.filename == "a.mkv"
     assert source.downloads == []
@@ -270,14 +274,7 @@ def test_subtitles_urls_use_the_public_url():
     assert entry["url"] == f"{PUBLIC_URL}/{TOKEN}/sub/{entry['id']}.srt"
 
 
-def test_subtitles_list_is_limited_per_language():
-    source = FakeSource(candidates=[fake_candidate(str(i)) for i in range(8)])
-    token = encode_config(UserConfig(languages=["eng"], max_per_language=3))
-    response = fake_client(source).get(f"/{token}/subtitles/movie/tt1375666.json")
-    assert len(response.json()["subtitles"]) == 3
-
-
-def test_subtitles_list_defaults_to_five_per_language():
+def test_subtitles_list_is_limited_to_five():
     source = FakeSource(candidates=[fake_candidate(str(i)) for i in range(8)])
     response = fake_client(source).get(f"/{TOKEN}/subtitles/movie/tt1375666.json")
     assert len(response.json()["subtitles"]) == 5
@@ -285,18 +282,15 @@ def test_subtitles_list_defaults_to_five_per_language():
 
 def test_subtitle_keys_hold_no_secrets():
     source = FakeSource(candidates=[fake_candidate("1")])
-    token = encode_config(
-        UserConfig(languages=["eng"], opensubtitles_api_key=API_KEY, subdl_api_key=API_KEY)
-    )
     (entry,) = (
-        fake_client(source).get(f"/{token}/subtitles/movie/tt1375666.json").json()["subtitles"]
+        fake_client(source).get(f"/{TOKEN}/subtitles/movie/tt1375666.json").json()["subtitles"]
     )
     padded = entry["id"] + "=" * (-len(entry["id"]) % 4)
-    assert json.loads(base64.urlsafe_b64decode(padded)) == ["fake", "1", "eng"]
+    assert json.loads(base64.urlsafe_b64decode(padded)) == ["fake", "1", "vie"]
     assert API_KEY not in entry["id"]
 
 
-def srt_path(source_id: str = "7", language: str = "eng", source: str = "fake") -> str:
+def srt_path(source_id: str = "7", language: str = "vie", source: str = "fake") -> str:
     return f"/{TOKEN}/sub/{encode_key(Candidate(source, source_id, language, ''))}.srt"
 
 
@@ -380,7 +374,7 @@ def test_srt_endpoint_rejects_unconfigured_source():
 
 
 def test_srt_endpoint_reports_source_errors_as_502():
-    source = FakeSource(error="OpenSubtitles download quota used up (HTTP 406)")
+    source = FakeSource(error="quota used up")
     test_client = fake_client(source)
     response = test_client.get(srt_path())
     assert response.status_code == 502

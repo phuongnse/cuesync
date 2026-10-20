@@ -16,15 +16,6 @@ os.environ["CUESYNC_DATA_DIR"] = tempfile.mkdtemp(prefix="cuesync-test-")
 def data_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("CUESYNC_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("CUESYNC_CACHE_MAX_MB", raising=False)
-    for name in (
-        "CUESYNC_TORRENT_FALLBACK",
-        "CUESYNC_TORRENT_TIMEOUT_S",
-        "CUESYNC_TORRENT_MAX_MB",
-        "CUESYNC_TORRENT_DOWN_KBPS",
-        "CUESYNC_TORRENT_UP_KBPS",
-        "CUESYNC_TORRENT_INTEGRATION",
-    ):
-        monkeypatch.delenv(name, raising=False)
     return tmp_path
 
 

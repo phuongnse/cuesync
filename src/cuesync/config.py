@@ -11,19 +11,12 @@ import binascii
 import json
 import logging
 import re
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-LANGUAGE_RE = re.compile(r"^[a-z]{3}$")
-OPTIONAL_FIELDS = (
-    "opensubtitles_api_key",
-    "opensubtitles_username",
-    "opensubtitles_password",
-    "subdl_api_key",
-    "debrid_provider",
-    "debrid_api_key",
-)
+# The only subtitle language CueSync serves (ISO 639-2).
+LANGUAGE = "vie"
+OPTIONAL_FIELDS = ("subdl_api_key", "debrid_api_key")
 # First path segments that are not a config and so are safe to log.
 PLAIN_SEGMENTS = frozenset({"health", "manifest.json", "configure"})
 FIRST_SEGMENT_RE = re.compile(r"^/([^/?#]+)")
@@ -36,14 +29,18 @@ class InvalidConfig(ValueError):
 class UserConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    languages: list[str] = Field(min_length=1)
-    opensubtitles_api_key: str | None = Field(default=None, repr=False)
-    opensubtitles_username: str | None = Field(default=None, repr=False)
-    opensubtitles_password: str | None = Field(default=None, repr=False)
     subdl_api_key: str | None = Field(default=None, repr=False)
-    debrid_provider: Literal["realdebrid", "torbox"] | None = None
+    # Real-Debrid is the only debrid service. The field keeps its old name so that install
+    # links made for Real-Debrid keep working.
     debrid_api_key: str | None = Field(default=None, repr=False)
-    max_per_language: int = Field(default=5, ge=1, le=20)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_other_debrid_key(cls, data: object) -> object:
+        """An old link can hold the key of another debrid service. It is not for Real-Debrid."""
+        if isinstance(data, dict) and data.get("debrid_provider") not in (None, "", "realdebrid"):
+            return {key: value for key, value in data.items() if key != "debrid_api_key"}
+        return data
 
     @field_validator(*OPTIONAL_FIELDS, mode="before")
     @classmethod
@@ -51,26 +48,6 @@ class UserConfig(BaseModel):
         if isinstance(value, str) and not value.strip():
             return None
         return value
-
-    @field_validator("languages")
-    @classmethod
-    def _check_languages(cls, value: list[str]) -> list[str]:
-        languages: list[str] = []
-        for code in value:
-            code = code.strip().lower()
-            if not LANGUAGE_RE.match(code):
-                raise ValueError("language codes are three lowercase letters")
-            if code not in languages:
-                languages.append(code)
-        return languages
-
-    @model_validator(mode="after")
-    def _check_dependencies(self) -> UserConfig:
-        if self.debrid_provider and not self.debrid_api_key:
-            raise ValueError("a debrid provider needs its API key")
-        if bool(self.opensubtitles_username) != bool(self.opensubtitles_password):
-            raise ValueError("OpenSubtitles username and password go together")
-        return self
 
 
 def encode_config(config: UserConfig) -> str:

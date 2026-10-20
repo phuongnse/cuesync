@@ -25,36 +25,11 @@
 <main data-base-url="{{BASE_URL}}">
 <h1>Configure CueSync</h1>
 <form id="form">
-  <label>Subtitle languages
-    <small>Three-letter codes in order of preference, for example <code>vie, eng</code>.</small>
-    <input name="languages" type="text" required autocapitalize="none" autocomplete="off" placeholder="vie, eng">
-  </label>
-  <label>OpenSubtitles API key
-    <input name="opensubtitles_api_key" type="password" autocomplete="off">
-  </label>
-  <label>OpenSubtitles username
-    <small>Optional. Give it together with the password.</small>
-    <input name="opensubtitles_username" type="text" autocapitalize="none" autocomplete="off">
-  </label>
-  <label>OpenSubtitles password
-    <input name="opensubtitles_password" type="password" autocomplete="off">
-  </label>
   <label>SubDL API key
-    <input name="subdl_api_key" type="password" autocomplete="off">
+    <input name="subdl_api_key" type="password" required autocomplete="off">
   </label>
-  <label>Subtitles per language
-    <small>The most you want listed for each language, from 1 to 20.</small>
-    <input name="max_per_language" type="number" min="1" max="20" placeholder="5">
-  </label>
-  <label>Debrid service
-    <select name="debrid_provider">
-      <option value="">None</option>
-      <option value="realdebrid">Real-Debrid</option>
-      <option value="torbox">TorBox</option>
-    </select>
-  </label>
-  <label>Debrid API key
-    <small>Required when you choose a debrid service.</small>
+  <label>Real-Debrid API key
+    <small>Optional. Needed to re-time the subtitles to your file.</small>
     <input name="debrid_api_key" type="password" autocomplete="off">
   </label>
   <button type="submit">Create install link</button>
@@ -73,9 +48,7 @@
 (function () {
   var base = document.querySelector("main").dataset.baseUrl;
   var form = document.getElementById("form");
-  var fields = ["languages", "opensubtitles_api_key", "opensubtitles_username",
-    "opensubtitles_password", "subdl_api_key", "max_per_language", "debrid_provider",
-    "debrid_api_key"];
+  var fields = ["subdl_api_key", "debrid_api_key"];
 
   function toBase64Url(text) {
     var bytes = new TextEncoder().encode(text);
@@ -96,15 +69,7 @@
     var cfg = {};
     fields.forEach(function (name) {
       var value = form.elements[name].value.trim();
-      if (name === "languages") {
-        var languages = value.toLowerCase().split(/[\s,]+/).filter(Boolean);
-        if (languages.length) cfg.languages = languages;
-      } else if (name === "max_per_language") {
-        var count = parseInt(value, 10);
-        if (!isNaN(count)) cfg[name] = count;
-      } else if (value) {
-        cfg[name] = value;
-      }
+      if (value) cfg[name] = value;
     });
     return cfg;
   }
@@ -113,8 +78,8 @@
     event.preventDefault();
     var cfg = readForm();
     var error = document.getElementById("error");
-    if (!cfg.languages) {
-      error.textContent = "Enter at least one language.";
+    if (!cfg.subdl_api_key) {
+      error.textContent = "Enter your SubDL API key.";
       return;
     }
     error.textContent = "";
@@ -141,9 +106,9 @@
     try {
       var saved = fromBase64Url(match[1]);
       fields.forEach(function (name) {
-        var value = saved[name];
-        if (name === "languages" && Array.isArray(value)) value = value.join(", ");
-        if (typeof value === "string" || typeof value === "number") form.elements[name].value = value;
+        // A key saved for another debrid service is not a Real-Debrid key.
+        if (name === "debrid_api_key" && saved.debrid_provider && saved.debrid_provider !== "realdebrid") return;
+        if (typeof saved[name] === "string") form.elements[name].value = saved[name];
       });
     } catch (e) {
       // An unreadable segment leaves the form empty.
