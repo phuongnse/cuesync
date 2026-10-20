@@ -39,7 +39,7 @@ class JobState(StrEnum):
 
 @dataclass
 class Job:
-    video_hash: str
+    video_key: str
     subtitle_key: str
     language: str
     state: JobState = JobState.PENDING
@@ -49,7 +49,7 @@ class Job:
 
 
 class Jobs:
-    """The jobs of one app, deduplicated by `(video hash, subtitle key)`."""
+    """The jobs of one app, deduplicated by `(video key, subtitle key)`."""
 
     def __init__(
         self,
@@ -74,29 +74,29 @@ class Jobs:
         for ident in expired:
             del self._jobs[ident]
 
-    def get(self, video_hash: str, key: str) -> Job | None:
+    def get(self, video_key: str, key: str) -> Job | None:
         self._purge()
-        return self._jobs.get((video_hash, key))
+        return self._jobs.get((video_key, key))
 
-    def for_video(self, video_hash: str) -> list[Job]:
+    def for_video(self, video_key: str) -> list[Job]:
         self._purge()
-        return [job for job in self._jobs.values() if job.video_hash == video_hash]
+        return [job for job in self._jobs.values() if job.video_key == video_key]
 
-    def submit(self, video_hash: str, candidates: Sequence[Candidate], work: Work) -> None:
+    def submit(self, video_key: str, candidates: Sequence[Candidate], work: Work) -> None:
         """Start one task for the candidates that have no job yet."""
         self._purge()
         fresh = [
             candidate
             for candidate in candidates
-            if (video_hash, encode_key(candidate)) not in self._jobs
+            if (video_key, encode_key(candidate)) not in self._jobs
         ]
         if not fresh:
             return
         jobs = []
         for candidate in fresh:
             key = encode_key(candidate)
-            job = Job(video_hash, key, candidate.language)
-            self._jobs[(video_hash, key)] = job
+            job = Job(video_key, key, candidate.language)
+            self._jobs[(video_key, key)] = job
             jobs.append(job)
         if self._semaphore is None:
             self._semaphore = asyncio.Semaphore(self.limit)
