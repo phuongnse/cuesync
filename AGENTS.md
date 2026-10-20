@@ -26,6 +26,8 @@ user runs it on their own PC and exposes it with Tailscale Funnel or similar).
    user with no Real-Debrid key gets the original subtitles and no sync runs.
 4. It extracts a few short audio windows spread over the file with ffmpeg (HTTP range
    reads; never the whole file).
+   A window that runs out of time keeps the audio decoded so far as a shorter window, and a
+   window with no audio is dropped.
 5. It tries each frame-rate ratio (1, 25/23.976, 24/23.976, ...) by stretching the subtitle,
    estimates the offset in each window, and keeps the ratio `a` and shift `b` in
    `t' = a·t + b` that most windows agree on.
