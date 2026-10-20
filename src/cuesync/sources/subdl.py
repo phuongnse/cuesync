@@ -232,7 +232,9 @@ def _candidates(
     for item in items if isinstance(items, list) else []:
         try:
             language = reverse.get(str(item["language"]).upper())
-            url = item["url"]
+            # SubDL appends `?api_key=...` to the link. The download works without it, and
+            # the link becomes the source id, which ends up in URLs and the cache.
+            url = item["url"].partition("?")[0]
             if language is None or not ZIP_PATH_RE.fullmatch(url):
                 continue
             source_id = url

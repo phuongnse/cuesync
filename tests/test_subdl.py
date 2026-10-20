@@ -239,6 +239,15 @@ def test_search_skips_malformed_entries():
     assert [c.source_id for c in found] == ["/subtitle/7-8.zip"]
 
 
+def test_search_drops_the_query_string_and_key_from_links():
+    body = {
+        "status": True,
+        "subtitles": [{"language": "EN", "url": f"/subtitle/7-8.zip?api_key={API_KEY}"}],
+    }
+    found = run_with(Api(search_answer(body)), lambda source: source.search(episode_request()))
+    assert [c.source_id for c in found] == ["/subtitle/7-8.zip:1:2"]
+
+
 def test_search_ignores_a_subtitles_field_that_is_not_a_list():
     body = {"status": True, "subtitles": "nope"}
     assert run_with(Api(search_answer(body)), lambda source: source.search(movie_request())) == []
